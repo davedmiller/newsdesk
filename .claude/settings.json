@@ -16,7 +16,14 @@
       "Bash(pgrep *)",
       "Bash(open -a *)",
       "Bash(security find-generic-password*)",
-      "Skill(ddm-*)"
+      "Skill(ddm-marked2)",
+      "Skill(ddm-review-plan)",
+      "Skill(ddm-permission-review)",
+      "Skill(ddm-help)",
+      "Skill(ddm-assess-plan)",
+      "Skill(ddm-compact-prep)",
+      "Skill(ddm-resume-plan)",
+      "Bash(./newsdesk *)"
     ],
     "deny": [
       "Bash(git reset --hard*)",

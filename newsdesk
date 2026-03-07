@@ -2,6 +2,12 @@
 # ABOUTME: Thin wrapper that invokes newsdesk.py from the same directory.
 # ABOUTME: Symlink this into a PATH dir (e.g., ln -s ~/Developer/newsdesk/newsdesk ~/bin/newsdesk).
 SELF="$0"
-[ -L "$SELF" ] && SELF="$(readlink "$SELF")"
+if [ -L "$SELF" ]; then
+    LINK_TARGET="$(readlink "$SELF")"
+    case "$LINK_TARGET" in
+        /*) SELF="$LINK_TARGET" ;;
+        *)  SELF="$(dirname "$SELF")/$LINK_TARGET" ;;
+    esac
+fi
 DIR="$(cd "$(dirname "$SELF")" && pwd)"
 exec python3 "$DIR/newsdesk.py" "$@"

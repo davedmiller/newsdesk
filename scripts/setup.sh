@@ -23,6 +23,9 @@ else
     echo "~/bin already in PATH via $ZSHRC"
 fi
 
+# Ensure wrapper is executable
+chmod +x "$REPO_DIR/newsdesk"
+
 # Create or update symlink
 if [ -L "$LINK" ]; then
     current="$(readlink "$LINK")"
