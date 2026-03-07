@@ -61,12 +61,10 @@ class TestSendRotation:
 
     def test_rotation_triggers(self, tmp_path):
         queue = tmp_path / "queue.jsonl"
-        # Write QUEUE_MAX_LINES + 1 entries
         for i in range(nd.QUEUE_MAX_LINES + 1):
             nd.send_notification(str(queue), f"T{i}", "m", 0, "p")
         lines = queue.read_text().strip().splitlines()
         assert len(lines) == nd.QUEUE_ROTATE_TO
-        # Should keep the most recent entries
         last = json.loads(lines[-1])
         assert last["title"] == f"T{nd.QUEUE_MAX_LINES}"
 
@@ -201,5 +199,190 @@ class TestMultiMachineConfig:
         assert len(config["remote_machines"]) == 2
         assert config["remote_machines"][0]["name"] == "mini"
         assert config["remote_machines"][1]["host"] == "server.local"
-        # queue_file in remote machines should also be expanded
         assert not config["remote_machines"][0]["queue_file"].startswith("~")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: watch tests
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryCap:
+    """U8: history.jsonl capped at HISTORY_MAX_ENTRIES."""
+
+    def test_caps_at_limit(self, tmp_path):
+        history_path = str(tmp_path / "history.jsonl")
+        entries = [
+            {"ts": float(i), "title": f"T{i}", "message": "m", "priority": 0, "project": "p"}
+            for i in range(nd.HISTORY_MAX_ENTRIES + 50)
+        ]
+        nd.append_to_history(history_path, entries)
+        result = nd.parse_jsonl(history_path)
+        assert len(result) == nd.HISTORY_MAX_ENTRIES
+        assert result[-1]["title"] == f"T{nd.HISTORY_MAX_ENTRIES + 49}"
+
+    def test_appends_within_limit(self, tmp_path):
+        history_path = str(tmp_path / "history.jsonl")
+        entries = [
+            {"ts": 1.0, "title": "A", "message": "m", "priority": 0, "project": "p"},
+            {"ts": 2.0, "title": "B", "message": "m", "priority": 0, "project": "p"},
+        ]
+        nd.append_to_history(history_path, entries)
+        result = nd.parse_jsonl(history_path)
+        assert len(result) == 2
+
+
+class TestPriorityIconMapping:
+    """U9: priority values map to correct icons."""
+
+    def test_all_priorities(self):
+        assert nd.priority_icon(-2) is None
+        assert nd.priority_icon(-1) == ""
+        assert nd.priority_icon(0) == "\u2705"
+        assert nd.priority_icon(1) == "\U0001f514"
+        assert nd.priority_icon(2) == "\U0001f514"
+
+    def test_unknown_priority_defaults(self):
+        assert nd.priority_icon(99) == "\u2705"
+
+
+class TestPriorityBell:
+    """U10: priority >= 1 triggers bell."""
+
+    def test_bell_for_high(self):
+        assert nd.should_bell(1) is True
+        assert nd.should_bell(2) is True
+
+    def test_no_bell_for_low(self):
+        assert nd.should_bell(0) is False
+        assert nd.should_bell(-1) is False
+        assert nd.should_bell(-2) is False
+
+
+class TestPrioritySilentSkipped:
+    """U11: priority -2 entries are not displayed."""
+
+    def test_silent_skipped(self):
+        assert nd.should_display({"priority": -2}) is False
+
+    def test_others_displayed(self):
+        for p in (-1, 0, 1, 2):
+            assert nd.should_display({"priority": p}) is True
+
+
+class TestPushoverProjectToggle:
+    """U14: ALL OFF disables all; ALL ON respects per-project."""
+
+    def test_all_off_blocks_everything(self):
+        state = nd.PushoverState(all_enabled=False, projects_default=True)
+        state.ensure_project("pcm")
+        assert state.should_forward("pcm") is False
+
+    def test_all_on_respects_project(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        state.toggle_project("pcm")
+        assert state.should_forward("pcm") is False
+        assert state.should_forward("other") is True
+
+    def test_all_on_project_on(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        assert state.should_forward("pcm") is True
+
+
+class TestPushoverNewProjectDefault:
+    """U15: new project inherits pushover_projects_default."""
+
+    def test_default_on(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        assert state.should_forward("brand_new") is True
+
+    def test_default_off(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=False)
+        assert state.should_forward("brand_new") is False
+
+
+class TestProjectFieldInDisplay:
+    """U16: display output includes [project] prefix."""
+
+    def test_format_includes_project(self):
+        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World", "priority": 0, "project": "pcm"}
+        line = nd.format_entry(entry)
+        assert "[pcm]" in line
+        assert "Hello" in line
+        assert "World" in line
+
+
+class TestQueueRenameReadDelete:
+    """U18: rename-read-delete pattern works."""
+
+    def test_consumes_queue(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        entry = {"ts": 1.0, "title": "A", "message": "m", "priority": 0, "project": "p"}
+        queue.write_text(json.dumps(entry) + "\n")
+        entries = nd.consume_local_queue(str(queue))
+        assert len(entries) == 1
+        assert entries[0]["title"] == "A"
+        assert not queue.exists()
+        assert not (tmp_path / "queue.jsonl.processing").exists()
+
+    def test_empty_queue(self, tmp_path):
+        entries = nd.consume_local_queue(str(tmp_path / "queue.jsonl"))
+        assert entries == []
+
+    def test_new_sends_during_consume(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        entry = {"ts": 1.0, "title": "A", "message": "m", "priority": 0, "project": "p"}
+        queue.write_text(json.dumps(entry) + "\n")
+        entries = nd.consume_local_queue(str(queue))
+        assert len(entries) == 1
+        entry2 = {"ts": 2.0, "title": "B", "message": "m", "priority": 0, "project": "p"}
+        queue.write_text(json.dumps(entry2) + "\n")
+        entries2 = nd.consume_local_queue(str(queue))
+        assert len(entries2) == 1
+        assert entries2[0]["title"] == "B"
+
+
+class TestStaleProcessingDeleted:
+    """U19: .processing file older than STALE_PROCESSING_AGE deleted without reading."""
+
+    def test_stale_deleted(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        processing = tmp_path / "queue.jsonl.processing"
+        entry = {"ts": 1.0, "title": "Stale", "message": "m", "priority": 0, "project": "p"}
+        processing.write_text(json.dumps(entry) + "\n")
+        old_time = time.time() - (2 * 86400)
+        os.utime(str(processing), (old_time, old_time))
+        entries = nd.consume_local_queue(str(queue))
+        assert entries == []
+        assert not processing.exists()
+
+
+class TestFreshProcessingRecovered:
+    """U20: .processing file younger than STALE_PROCESSING_AGE read then deleted."""
+
+    def test_fresh_recovered(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        processing = tmp_path / "queue.jsonl.processing"
+        entry = {"ts": 1.0, "title": "Recovered", "message": "m", "priority": 0, "project": "p"}
+        processing.write_text(json.dumps(entry) + "\n")
+        entries = nd.consume_local_queue(str(queue))
+        assert len(entries) == 1
+        assert entries[0]["title"] == "Recovered"
+        assert not processing.exists()
+
+    def test_fresh_processing_plus_new_queue(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        processing = tmp_path / "queue.jsonl.processing"
+        old_entry = {"ts": 1.0, "title": "Old", "message": "m", "priority": 0, "project": "p"}
+        processing.write_text(json.dumps(old_entry) + "\n")
+        new_entry = {"ts": 2.0, "title": "New", "message": "m", "priority": 0, "project": "p"}
+        queue.write_text(json.dumps(new_entry) + "\n")
+        entries = nd.consume_local_queue(str(queue))
+        assert len(entries) == 2
+        titles = [e["title"] for e in entries]
+        assert "Old" in titles
+        assert "New" in titles
+        assert not processing.exists()
+        assert not queue.exists()
