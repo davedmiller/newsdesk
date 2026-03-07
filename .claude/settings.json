@@ -1,0 +1,28 @@
+{
+  "defaultMode": "acceptEdits",
+  "permissions": {
+    "allow": [
+      "Bash(pytest *)",
+      "Bash(python -m pytest *)",
+      "Bash(python3 *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(pip install *)",
+      "Bash(ssh mini *)",
+      "Bash(pgrep *)",
+      "Bash(open -a *)",
+      "Bash(security find-generic-password*)",
+      "Skill(ddm-*)"
+    ],
+    "deny": [
+      "Bash(git reset --hard*)",
+      "Bash(git clean *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
+    ]
+  }
+}
