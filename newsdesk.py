@@ -171,7 +171,6 @@ def consume_local_queue(queue_path):
 
 def consume_remote_queue(host, queue_file):
     """Consume a remote queue via SSH rename-read-delete. Returns list of entries."""
-    # Single SSH command: recover stale .processing, then rename-read-delete
     cmd = (
         f'f="{queue_file}"; p="$f.processing"; '
         f'if [ -f "$p" ]; then '
@@ -354,6 +353,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
     display_lines = []
     mode = "latest"  # latest | history | pushover
     history_offset = 0
+    status_msg = ""         # transient message shown on status line
+    status_msg_until = 0    # timestamp when status_msg expires
 
     while True:
         # Poll queues
@@ -376,6 +377,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                         if app_token and user_key:
                             forward_to_pushover(entry, app_token, user_key)
 
+        # Clear expired status message
+        if status_msg and time.time() > status_msg_until:
+            status_msg = ""
+
         # Draw
         stdscr.erase()
         height, width = stdscr.getmaxyx()
@@ -384,7 +389,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         header = "newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover (Q)uit"
         n_remote = len(config["remote_machines"])
         poll_info = f"polling local + {n_remote} remote" if n_remote else "polling local"
-        status = f"Pushover: {po_state.status_line()}  \u23f3 {poll_info}"
+        if status_msg:
+            status = status_msg
+        else:
+            status = f"Pushover: {po_state.status_line()}  \u23f3 {poll_info}"
 
         try:
             stdscr.addnstr(0, 0, header, width - 1)
@@ -471,6 +479,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 with open(save_path, "w") as f:
                     for entry in history:
                         f.write(format_entry(entry) + "\n")
+                status_msg = f"Saved to {save_path}"
+                status_msg_until = time.time() + 3
             elif ch in (ord("p"), ord("P")):
                 mode = "pushover"
             elif mode == "history":
