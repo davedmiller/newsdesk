@@ -399,6 +399,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
     show_silent = False     # whether to display priority -2 entries
     status_msg = ""         # transient message shown on status line
     status_msg_until = 0    # timestamp when status_msg expires
+    poll_blink = False      # toggles each loop for activity indicator
 
     while True:
         # Poll queues
@@ -431,13 +432,16 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 
         # Header
         silent_indicator = " [silent ON]" if show_silent else ""
-        header = f"newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit (?)help{silent_indicator}"
+        mode_label = {"latest": "LATEST", "history": "HISTORY", "pushover": "PUSHOVER", "help": "HELP"}.get(mode, mode.upper())
+        header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit (?)help{silent_indicator}"
         n_remote = len(config["remote_machines"])
         poll_info = f"polling local + {n_remote} remote" if n_remote else "polling local"
+        poll_blink = not poll_blink
+        blink_char = "\u25cf" if poll_blink else " "
         if status_msg:
             status = status_msg
         else:
-            status = f"Pushover: {po_state.status_line()}  \u23f3 {poll_info}"
+            status = f"{blink_char} Pushover: {po_state.status_line()}  \u23f3 {poll_info}"
 
         try:
             stdscr.addnstr(0, 0, header, width - 1)
