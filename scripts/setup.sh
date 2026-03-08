@@ -46,5 +46,8 @@ fi
 # Initialize config
 "$LINK" init
 
+MACHINE_NAME="$(hostname -s)"
+"$LINK" send "Newsdesk Setup" "newsdesk successfully installed on $MACHINE_NAME" --priority 0 --project newsdesk
+
 echo ""
 echo "Done. Run 'source ~/.zshrc' or open a new terminal to use 'newsdesk'."

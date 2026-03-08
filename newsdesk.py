@@ -54,9 +54,8 @@ def load_config(path):
     for key in ("queue_file", "history_file"):
         config[key] = os.path.expanduser(config[key])
 
-    for machine in config.get("remote_machines", []):
-        if "queue_file" in machine:
-            machine["queue_file"] = os.path.expanduser(machine["queue_file"])
+    # Don't expand ~ for remote paths — tilde refers to the remote user's home,
+    # not the local user's. consume_remote_queue handles ~ -> $HOME substitution.
 
     return config
 
@@ -171,8 +170,10 @@ def consume_local_queue(queue_path):
 
 def consume_remote_queue(host, queue_file):
     """Consume a remote queue via SSH rename-read-delete. Returns list of entries."""
+    # Replace ~ with $HOME so tilde expands on the remote machine
+    remote_path = queue_file.replace("~", "$HOME", 1) if queue_file.startswith("~") else queue_file
     cmd = (
-        f'f="{queue_file}"; p="$f.processing"; '
+        f'f="{remote_path}"; p="$f.processing"; '
         f'if [ -f "$p" ]; then '
         f'  if [ "$(find "$p" -mtime -1 2>/dev/null)" ]; then cat "$p"; fi; '
         f'  rm -f "$p"; '

@@ -199,7 +199,8 @@ class TestMultiMachineConfig:
         assert len(config["remote_machines"]) == 2
         assert config["remote_machines"][0]["name"] == "mini"
         assert config["remote_machines"][1]["host"] == "server.local"
-        assert not config["remote_machines"][0]["queue_file"].startswith("~")
+        # Remote paths keep ~ intact — expanded on the remote machine, not locally
+        assert config["remote_machines"][0]["queue_file"] == "~/.local/share/newsdesk/queue.jsonl"
 
 
 # ---------------------------------------------------------------------------
