@@ -5,6 +5,7 @@ import argparse
 import curses
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -114,8 +115,15 @@ def should_bell(priority):
     return priority >= 1
 
 
-def should_display(entry):
-    """Return True if this entry should be shown (priority -2 is silent)."""
+def should_display(entry, show_silent=False):
+    """Return True if this entry should be shown. Priority -2 hidden unless show_silent."""
+    if entry.get("priority", 0) == -2:
+        return show_silent
+    return True
+
+
+def should_forward_pushover(entry):
+    """Return True if this entry should be forwarded to Pushover. Priority -2 is never forwarded."""
     return entry.get("priority", 0) != -2
 
 
@@ -130,8 +138,12 @@ def format_entry(entry):
     title = entry.get("title", "")
     message = entry.get("message", "")
 
+    machine = entry.get("machine", "")
+
     parts = [ts]
     parts.append(f"[{project}]")
+    if machine:
+        parts.append(machine)
     if icon:
         parts.append(icon)
     parts.append(f"{title} \u2014 {message}")
@@ -289,6 +301,29 @@ def read_keychain_token(service):
 
 
 # ---------------------------------------------------------------------------
+# Auto-detection helpers
+# ---------------------------------------------------------------------------
+def get_machine_name():
+    """Return short lowercase hostname."""
+    return socket.gethostname().split(".")[0].lower()
+
+
+def detect_project(directory=None):
+    """Walk up from directory looking for a .git dir. Return repo name or DEFAULT_PROJECT."""
+    if directory is None:
+        directory = os.getcwd()
+    path = os.path.abspath(directory)
+    while True:
+        if os.path.isdir(os.path.join(path, ".git")):
+            return os.path.basename(path).lower()
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return DEFAULT_PROJECT
+
+
+# ---------------------------------------------------------------------------
 # Send
 # ---------------------------------------------------------------------------
 def send_notification(queue_path, title, message, priority, project=None):
@@ -302,6 +337,7 @@ def send_notification(queue_path, title, message, priority, project=None):
         "message": message,
         "priority": priority,
         "project": project,
+        "machine": get_machine_name(),
     }
 
     os.makedirs(os.path.dirname(queue_path), exist_ok=True)
@@ -354,6 +390,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
     display_lines = []
     mode = "latest"  # latest | history | pushover
     history_offset = 0
+    show_silent = False     # whether to display priority -2 entries
     status_msg = ""         # transient message shown on status line
     status_msg_until = 0    # timestamp when status_msg expires
 
@@ -370,11 +407,11 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 append_to_history(config["history_file"], new_entries)
                 for entry in new_entries:
                     po_state.ensure_project(entry.get("project", DEFAULT_PROJECT))
-                    if should_display(entry):
+                    if should_display(entry, show_silent):
                         display_lines.append(format_entry(entry))
                         if should_bell(entry.get("priority", 0)):
                             curses.beep()
-                    if po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
+                    if should_forward_pushover(entry) and po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
                         if app_token and user_key:
                             forward_to_pushover(entry, app_token, user_key)
 
@@ -387,7 +424,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         height, width = stdscr.getmaxyx()
 
         # Header
-        header = "newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover (Q)uit"
+        silent_indicator = " [silent ON]" if show_silent else ""
+        header = f"newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit{silent_indicator}"
         n_remote = len(config["remote_machines"])
         poll_info = f"polling local + {n_remote} remote" if n_remote else "polling local"
         if status_msg:
@@ -415,7 +453,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 
         elif mode == "history":
             history = parse_jsonl(config["history_file"])
-            history_lines = [format_entry(e) for e in history if should_display(e)]
+            history_lines = [format_entry(e) for e in history if should_display(e, show_silent)]
             total = len(history_lines)
             history_offset = max(0, min(history_offset, total - content_height))
             visible = history_lines[history_offset:history_offset + content_height]
@@ -482,6 +520,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                         f.write(format_entry(entry) + "\n")
                 status_msg = f"Saved to {save_path}"
                 status_msg_until = time.time() + 3
+            elif ch in (ord("v"), ord("V")):
+                show_silent = not show_silent
+                status_msg = f"Silent messages: {'shown' if show_silent else 'hidden'}"
+                status_msg_until = time.time() + 3
             elif ch in (ord("p"), ord("P")):
                 mode = "pushover"
             elif mode == "history":
@@ -497,13 +539,14 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 def cmd_send(args):
     """Handle the 'send' subcommand."""
     config = load_config(os.path.expanduser("~/.config/newsdesk/config.json"))
+    project = args.project if args.project else detect_project()
     try:
         send_notification(
             config["queue_file"],
             args.title,
             args.message,
             args.priority,
-            args.project,
+            project,
         )
     except Exception:
         pass  # best-effort

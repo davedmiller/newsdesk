@@ -261,7 +261,7 @@ class TestPriorityBell:
 
 
 class TestPrioritySilentSkipped:
-    """U11: priority -2 entries are not displayed."""
+    """U11: priority -2 entries are not displayed by default."""
 
     def test_silent_skipped(self):
         assert nd.should_display({"priority": -2}) is False
@@ -269,6 +269,32 @@ class TestPrioritySilentSkipped:
     def test_others_displayed(self):
         for p in (-1, 0, 1, 2):
             assert nd.should_display({"priority": p}) is True
+
+
+class TestSilentSkipsPushover:
+    """U21: priority -2 entries are not forwarded to Pushover."""
+
+    def test_silent_not_forwarded(self):
+        assert nd.should_forward_pushover({"priority": -2}) is False
+
+    def test_others_forwarded(self):
+        for p in (-1, 0, 1, 2):
+            assert nd.should_forward_pushover({"priority": p}) is True
+
+
+class TestSilentVisibleInHistory:
+    """U22: show_silent flag controls whether -2 entries appear in display."""
+
+    def test_hidden_by_default(self):
+        assert nd.should_display({"priority": -2}, show_silent=False) is False
+
+    def test_visible_when_toggled(self):
+        assert nd.should_display({"priority": -2}, show_silent=True) is True
+
+    def test_normal_always_visible(self):
+        for p in (-1, 0, 1, 2):
+            assert nd.should_display({"priority": p}, show_silent=False) is True
+            assert nd.should_display({"priority": p}, show_silent=True) is True
 
 
 class TestPushoverProjectToggle:
@@ -304,6 +330,49 @@ class TestPushoverNewProjectDefault:
         assert state.should_forward("brand_new") is False
 
 
+class TestMachineNameInSend:
+    """U23: send includes machine name in JSONL entry."""
+
+    def test_machine_field_present(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        nd.send_notification(str(queue), "T", "M", 0, "p")
+        entry = json.loads(queue.read_text().strip())
+        assert "machine" in entry
+        assert isinstance(entry["machine"], str)
+        assert len(entry["machine"]) > 0
+
+    def test_machine_field_matches_hostname(self, tmp_path):
+        import socket
+        queue = tmp_path / "queue.jsonl"
+        nd.send_notification(str(queue), "T", "M", 0, "p")
+        entry = json.loads(queue.read_text().strip())
+        expected = socket.gethostname().split(".")[0].lower()
+        assert entry["machine"] == expected
+
+
+class TestDetectProjectFromGit:
+    """U24: auto-detect project name from git repo."""
+
+    def test_detects_repo_name(self, tmp_path):
+        # Create a fake git repo
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        result = nd.detect_project(str(tmp_path))
+        assert result == tmp_path.name.lower()
+
+    def test_fallback_when_no_git(self, tmp_path):
+        result = nd.detect_project(str(tmp_path))
+        assert result == nd.DEFAULT_PROJECT
+
+    def test_nested_directory_finds_repo_root(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        nested = tmp_path / "src" / "deep"
+        nested.mkdir(parents=True)
+        result = nd.detect_project(str(nested))
+        assert result == tmp_path.name.lower()
+
+
 class TestProjectFieldInDisplay:
     """U16: display output includes [project] prefix."""
 
@@ -313,6 +382,22 @@ class TestProjectFieldInDisplay:
         assert "[pcm]" in line
         assert "Hello" in line
         assert "World" in line
+
+
+class TestMachineNameInDisplay:
+    """U25: display output includes machine name."""
+
+    def test_format_includes_machine(self):
+        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World",
+                 "priority": 0, "project": "pcm", "machine": "mini"}
+        line = nd.format_entry(entry)
+        assert "mini" in line
+
+    def test_format_without_machine_field(self):
+        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World",
+                 "priority": 0, "project": "pcm"}
+        line = nd.format_entry(entry)
+        assert "Hello" in line
 
 
 class TestQueueRenameReadDelete:
