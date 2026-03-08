@@ -431,7 +431,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 
         # Header
         silent_indicator = " [silent ON]" if show_silent else ""
-        header = f"newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit{silent_indicator}"
+        header = f"newsdesk \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit (?)help{silent_indicator}"
         n_remote = len(config["remote_machines"])
         poll_info = f"polling local + {n_remote} remote" if n_remote else "polling local"
         if status_msg:
@@ -471,6 +471,39 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 except curses.error:
                     pass
 
+        elif mode == "help":
+            help_lines = [
+                "Keyboard shortcuts:",
+                "",
+                "  L   Latest view — live tail of incoming notifications",
+                "  H   History view — browse all processed notifications",
+                "  C   Clear the latest view",
+                "  S   Save history snapshot to a .log file",
+                "  V   Toggle visibility of silent (priority -2) messages",
+                "  P   Pushover settings — toggle forwarding per project",
+                "  Q   Quit the watcher",
+                "  ?   This help screen",
+                "",
+                "History view navigation:",
+                "",
+                "  Up/k       Scroll up one line",
+                "  Down/j     Scroll down one line",
+                "  PgUp       Scroll up one page",
+                "  PgDn       Scroll down one page",
+                "  Home       Jump to oldest",
+                "  End        Jump to newest",
+                "",
+                "Press Esc to return.",
+            ]
+            for i, line in enumerate(help_lines):
+                if i >= content_height:
+                    break
+                try:
+                    padded = line.ljust(width - 1)[:width - 1]
+                    stdscr.addnstr(content_start + i, 0, padded, width - 1)
+                except curses.error:
+                    pass
+
         elif mode == "pushover":
             try:
                 stdscr.addnstr(content_start, 0, "Pushover forwarding:", width - 1)
@@ -496,7 +529,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         if ch == -1:
             continue
 
-        if mode == "pushover":
+        if mode == "help":
+            if ch == 27:  # Esc
+                mode = "latest"
+        elif mode == "pushover":
             if ch == 27:  # Esc
                 mode = "latest"
             elif ch in (ord("a"), ord("A")):
@@ -534,6 +570,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 status_msg_until = time.time() + 3
             elif ch in (ord("p"), ord("P")):
                 mode = "pushover"
+            elif ch == ord("?"):
+                mode = "help"
             elif mode == "history":
                 if ch == curses.KEY_UP or ch == ord("k"):
                     history_offset = max(0, history_offset - 1)
