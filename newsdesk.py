@@ -21,6 +21,7 @@ SSH_CONNECT_TIMEOUT = 2
 SSH_COMMAND_TIMEOUT = 3
 DEFAULT_PROJECT = "general"
 STALE_PROCESSING_AGE = 86400  # 1 day in seconds
+DISPLAY_FIELD_WIDTH = 15
 
 DEFAULT_CONFIG = {
     "queue_file": "~/.local/share/newsdesk/queue.jsonl",
@@ -130,20 +131,25 @@ def should_forward_pushover(entry):
 # ---------------------------------------------------------------------------
 # Display formatting
 # ---------------------------------------------------------------------------
+def _fit_field(value, width=DISPLAY_FIELD_WIDTH):
+    """Pad short values or truncate long values to a fixed width."""
+    if len(value) > width:
+        return value[:width - 1] + "\u2026"
+    return f"{value:<{width}}"
+
+
 def format_entry(entry):
     """Format a notification entry as a display line."""
     ts = time.strftime("%H:%M:%S", time.localtime(entry.get("ts", 0)))
-    project = entry.get("project", DEFAULT_PROJECT)
+    project = _fit_field(entry.get("project", DEFAULT_PROJECT))
     icon = priority_icon(entry.get("priority", 0))
     title = entry.get("title", "")
     message = entry.get("message", "")
-
     machine = entry.get("machine", "")
 
-    parts = [ts]
-    parts.append(f"[{project}]")
+    parts = [ts, project]
     if machine:
-        parts.append(machine)
+        parts.append(_fit_field(machine))
     if icon:
         parts.append(icon)
     parts.append(f"{title} \u2014 {message}")
@@ -447,7 +453,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             visible = display_lines[-(content_height):]
             for i, line in enumerate(visible):
                 try:
-                    stdscr.addnstr(content_start + i, 0, line, width - 1)
+                    padded = line.ljust(width - 1)[:width - 1]
+                    stdscr.addnstr(content_start + i, 0, padded, width - 1)
                 except curses.error:
                     pass
 
@@ -459,7 +466,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             visible = history_lines[history_offset:history_offset + content_height]
             for i, line in enumerate(visible):
                 try:
-                    stdscr.addnstr(content_start + i, 0, line, width - 1)
+                    padded = line.ljust(width - 1)[:width - 1]
+                    stdscr.addnstr(content_start + i, 0, padded, width - 1)
                 except curses.error:
                     pass
 
@@ -505,7 +513,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 mode = "latest"
             elif ch in (ord("h"), ord("H")):
                 mode = "history"
-                history_offset = 0
+                history_offset = 999999  # will be clamped to end
             elif ch in (ord("c"), ord("C")):
                 display_lines.clear()
             elif ch in (ord("s"), ord("S")):
@@ -531,6 +539,14 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                     history_offset = max(0, history_offset - 1)
                 elif ch == curses.KEY_DOWN or ch == ord("j"):
                     history_offset += 1
+                elif ch == curses.KEY_PPAGE:  # Page Up
+                    history_offset = max(0, history_offset - content_height)
+                elif ch == curses.KEY_NPAGE:  # Page Down
+                    history_offset += content_height
+                elif ch == curses.KEY_HOME:
+                    history_offset = 0
+                elif ch == curses.KEY_END:
+                    history_offset = 999999  # clamped on next draw
 
 
 # ---------------------------------------------------------------------------

@@ -379,7 +379,7 @@ class TestProjectFieldInDisplay:
     def test_format_includes_project(self):
         entry = {"ts": 1709750535.0, "title": "Hello", "message": "World", "priority": 0, "project": "pcm"}
         line = nd.format_entry(entry)
-        assert "[pcm]" in line
+        assert "pcm" in line
         assert "Hello" in line
         assert "World" in line
 
@@ -398,6 +398,46 @@ class TestMachineNameInDisplay:
                  "priority": 0, "project": "pcm"}
         line = nd.format_entry(entry)
         assert "Hello" in line
+
+
+class TestFieldPadding:
+    """U26: project and machine fields are padded/truncated to fixed width."""
+
+    def test_short_project_padded(self):
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": "pcm", "machine": "mini"}
+        line = nd.format_entry(entry)
+        # project field should be padded to DISPLAY_FIELD_WIDTH
+        assert f"{'pcm':<{nd.DISPLAY_FIELD_WIDTH}}" in line
+
+    def test_long_project_truncated(self):
+        long_name = "a" * (nd.DISPLAY_FIELD_WIDTH + 10)
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": long_name, "machine": "mini"}
+        line = nd.format_entry(entry)
+        expected = long_name[:nd.DISPLAY_FIELD_WIDTH - 1] + "\u2026"
+        assert expected in line
+
+    def test_short_machine_padded(self):
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": "pcm", "machine": "m4"}
+        line = nd.format_entry(entry)
+        assert f"{'m4':<{nd.DISPLAY_FIELD_WIDTH}}" in line
+
+    def test_long_machine_truncated(self):
+        long_name = "b" * (nd.DISPLAY_FIELD_WIDTH + 10)
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": "pcm", "machine": long_name}
+        line = nd.format_entry(entry)
+        expected = long_name[:nd.DISPLAY_FIELD_WIDTH - 1] + "\u2026"
+        assert expected in line
+
+    def test_exact_width_not_truncated(self):
+        name = "a" * nd.DISPLAY_FIELD_WIDTH
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": name, "machine": "mini"}
+        line = nd.format_entry(entry)
+        assert name in line
 
 
 class TestQueueRenameReadDelete:
