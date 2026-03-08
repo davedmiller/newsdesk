@@ -263,11 +263,13 @@ class PushoverState:
         return sorted(self._projects.items())
 
     def status_line(self):
-        """Return a status string for the header."""
-        parts = [f"ALL {'✓' if self.all_enabled else '✗'}"]
-        for name, enabled in self.known_projects():
-            parts.append(f"{name} {'✓' if enabled else '✗'}")
-        return " | ".join(parts)
+        """Return a compact status string for the header."""
+        if not self.all_enabled:
+            return "✗"
+        muted = [name for name, enabled in self.known_projects() if not enabled]
+        if muted:
+            return f"✓ ({len(muted)} muted)"
+        return "✓"
 
 
 # ---------------------------------------------------------------------------
@@ -388,14 +390,15 @@ def cmd_watch_curses(stdscr, config, pushover_override):
     # Read Pushover tokens if enabled
     app_token = user_key = None
     if pushover_enabled:
-        app_token = read_keychain_token("pcm-app-token")
-        user_key = read_keychain_token("pcm-user-key")
+        app_token = read_keychain_token("newsdesk-app-token")
+        user_key = read_keychain_token("newsdesk-user-key")
         if not app_token or not user_key:
             pushover_enabled = False
 
     display_lines = []
-    mode = "latest"  # latest | history | pushover
+    mode = "latest"  # latest | history | pushover | help
     history_offset = 0
+    help_page = 0           # 0 = keys, 1 = priority reference
     show_silent = False     # whether to display priority -2 entries
     status_msg = ""         # transient message shown on status line
     status_msg_until = 0    # timestamp when status_msg expires
@@ -434,8 +437,13 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         silent_indicator = " [silent ON]" if show_silent else ""
         mode_label = {"latest": "LATEST", "history": "HISTORY", "pushover": "PUSHOVER", "help": "HELP"}.get(mode, mode.upper())
         header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit (?)help{silent_indicator}"
-        n_remote = len(config["remote_machines"])
-        poll_info = f"polling local + {n_remote} remote" if n_remote else "polling local"
+        remotes = config["remote_machines"]
+        if len(remotes) == 1:
+            poll_info = f"polling local + {remotes[0]['host']}"
+        elif remotes:
+            poll_info = f"polling local + {len(remotes)} remote"
+        else:
+            poll_info = "polling local"
         poll_blink = not poll_blink
         blink_char = "\u25cf" if poll_blink else " "
         if status_msg:
@@ -476,7 +484,9 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                     pass
 
         elif mode == "help":
-            help_lines = [
+            help_pages = []
+            # Page 1: keyboard shortcuts & polling
+            page1 = [
                 "Keyboard shortcuts:",
                 "",
                 "  L   Latest view — live tail of incoming notifications",
@@ -497,8 +507,41 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 "  Home       Jump to oldest",
                 "  End        Jump to newest",
                 "",
-                "Press Esc to return.",
+                "Polling:",
+                "",
+                "  Local queue: " + config["queue_file"],
             ]
+            for m in config["remote_machines"]:
+                page1.append(f"  Remote: {m['host']}:{m['queue_file']}")
+            if not config["remote_machines"]:
+                page1.append("  No remote machines configured")
+            help_pages.append(page1)
+            # Page 2: priority reference & Pushover status
+            app_status = "✓ found" if app_token else "✗ missing"
+            key_status = "✓ found" if user_key else "✗ missing"
+            po_active = "active" if pushover_enabled else "inactive"
+            help_pages.append([
+                "Priority reference:",
+                "",
+                "  Priority   Icon   Bell   Display          Pushover",
+                "  ────────   ────   ────   ───────          ────────",
+                "  -2 silent  (none)  no    hidden (V key)   never",
+                "  -1 quiet   (none)  no    yes              yes",
+                "   0 normal  \u2705      no    yes              yes",
+                "   1 high    \U0001f514      yes   yes              yes",
+                "   2 urgent  \U0001f514      yes   yes              yes",
+                "",
+                "Use --priority N with 'newsdesk send' to set priority.",
+                "Pushover relay also respects per-project toggles (P key).",
+                "",
+                f"Pushover status: {po_active}",
+                f"  Keychain newsdesk-app-token: {app_status}",
+                f"  Keychain newsdesk-user-key:  {key_status}",
+            ])
+            help_page = min(help_page, len(help_pages) - 1)
+            help_lines = help_pages[help_page]
+            nav = f"Page {help_page + 1}/{len(help_pages)} — Left/Right to switch, Esc to return"
+            help_lines = help_lines + ["", nav]
             for i, line in enumerate(help_lines):
                 if i >= content_height:
                     break
@@ -536,6 +579,11 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         if mode == "help":
             if ch == 27:  # Esc
                 mode = "latest"
+                help_page = 0
+            elif ch == curses.KEY_RIGHT or ch == ord("l"):
+                help_page += 1
+            elif ch == curses.KEY_LEFT or ch == ord("h"):
+                help_page = max(0, help_page - 1)
         elif mode == "pushover":
             if ch == 27:  # Esc
                 mode = "latest"
@@ -637,7 +685,7 @@ def cmd_init(args):
             f.write("\n")
         print(f"Config created: {cfg_path}")
 
-    for key_name in ("pcm-app-token", "pcm-user-key"):
+    for key_name in ("newsdesk-app-token", "newsdesk-user-key"):
         token = read_keychain_token(key_name)
         if token:
             print(f"  Keychain: {key_name} \u2713")

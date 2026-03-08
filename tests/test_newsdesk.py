@@ -330,6 +330,36 @@ class TestPushoverNewProjectDefault:
         assert state.should_forward("brand_new") is False
 
 
+class TestPushoverStatusLine:
+    """U27: status_line is compact — no per-project details when all enabled."""
+
+    def test_all_on_no_muted(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        state.ensure_project("newsdesk")
+        assert state.status_line() == "✓"
+
+    def test_all_off(self):
+        state = nd.PushoverState(all_enabled=False, projects_default=True)
+        assert state.status_line() == "✗"
+
+    def test_all_on_some_muted(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        state.ensure_project("newsdesk")
+        state.toggle_project("pcm")
+        assert state.status_line() == "✓ (1 muted)"
+
+    def test_all_on_multiple_muted(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("a")
+        state.ensure_project("b")
+        state.ensure_project("c")
+        state.toggle_project("a")
+        state.toggle_project("c")
+        assert state.status_line() == "✓ (2 muted)"
+
+
 class TestMachineNameInSend:
     """U23: send includes machine name in JSONL entry."""
 
