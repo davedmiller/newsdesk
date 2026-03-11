@@ -251,6 +251,14 @@ class PushoverState:
         """Toggle the ALL master switch."""
         self.all_enabled = not self.all_enabled
 
+    def enable_all(self):
+        """Turn the master switch ON (does not change per-project state)."""
+        self.all_enabled = True
+
+    def disable_all(self):
+        """Turn the master switch OFF (does not change per-project state)."""
+        self.all_enabled = False
+
     def should_forward(self, project):
         """Return True if a notification for this project should be forwarded."""
         if not self.all_enabled:
@@ -555,13 +563,16 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             try:
                 stdscr.addnstr(content_start, 0, "Pushover forwarding:", width - 1)
                 stdscr.addnstr(content_start + 1, 0,
-                               f"  [A] ALL {'✓' if po_state.all_enabled else '✗'}", width - 1)
+                               f"  [+] Turn all ON   [-] Turn all OFF   "
+                               f"(master: {'ON' if po_state.all_enabled else 'OFF'})",
+                               width - 1)
                 for idx, (name, enabled) in enumerate(po_state.known_projects()):
                     label = f"  [{idx + 1}] {name} {'✓' if enabled else '✗'}"
                     stdscr.addnstr(content_start + 2 + idx, 0, label, width - 1)
                 prompt_row = content_start + 2 + len(po_state.known_projects())
                 stdscr.addnstr(prompt_row, 0,
-                               "Press number to toggle, A for ALL, Esc to close", width - 1)
+                               "Press number to toggle, +/- for master, Esc to close",
+                               width - 1)
             except curses.error:
                 pass
 
@@ -587,8 +598,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         elif mode == "pushover":
             if ch == 27:  # Esc
                 mode = "latest"
-            elif ch in (ord("a"), ord("A")):
-                po_state.toggle_all()
+            elif ch == ord("+") or ch == ord("="):
+                po_state.enable_all()
+            elif ch == ord("-") or ch == ord("_"):
+                po_state.disable_all()
             elif ord("1") <= ch <= ord("9"):
                 idx = ch - ord("1")
                 projects = po_state.known_projects()

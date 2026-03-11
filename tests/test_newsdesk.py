@@ -318,6 +318,45 @@ class TestPushoverProjectToggle:
         assert state.should_forward("pcm") is True
 
 
+class TestPushoverEnableDisableAll:
+    """U28: enable_all/disable_all control master switch without touching projects."""
+
+    def test_disable_all_blocks_everything(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        state.disable_all()
+        assert state.all_enabled is False
+        assert state.should_forward("pcm") is False
+
+    def test_enable_all_restores_forwarding(self):
+        state = nd.PushoverState(all_enabled=False, projects_default=True)
+        state.ensure_project("pcm")
+        state.enable_all()
+        assert state.all_enabled is True
+        assert state.should_forward("pcm") is True
+
+    def test_disable_all_preserves_project_state(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.ensure_project("pcm")
+        state.ensure_project("other")
+        state.toggle_project("pcm")  # pcm OFF, other ON
+        state.disable_all()
+        state.enable_all()
+        # Project states unchanged
+        assert state.should_forward("pcm") is False
+        assert state.should_forward("other") is True
+
+    def test_enable_all_when_already_enabled(self):
+        state = nd.PushoverState(all_enabled=True, projects_default=True)
+        state.enable_all()
+        assert state.all_enabled is True
+
+    def test_disable_all_when_already_disabled(self):
+        state = nd.PushoverState(all_enabled=False, projects_default=True)
+        state.disable_all()
+        assert state.all_enabled is False
+
+
 class TestPushoverNewProjectDefault:
     """U15: new project inherits pushover_projects_default."""
 
