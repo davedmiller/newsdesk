@@ -137,7 +137,7 @@ Press number to toggle, A for ALL, Esc to close
   "queue_file": "~/.local/share/newsdesk/queue.jsonl",
   "history_file": "~/.local/share/newsdesk/history.jsonl",
   "remote_machines": [],
-  "pushover_enabled": true,
+  "pushover_enabled": false,
   "pushover_projects_default": true
 }
 ```
@@ -151,7 +151,7 @@ Example remote machine entry:
 {"name": "mini", "host": "mini", "queue_file": "~/.local/share/newsdesk/queue.jsonl"}
 ```
 
-- `pushover_enabled` — initial state of the ALL toggle
+- `pushover_enabled` — initial state of the ALL toggle (default: `false` — Pushover is opt-in)
 - `pushover_projects_default` — whether new projects start ON or OFF
 
 All config paths are expanded via `os.path.expanduser()` at load time.

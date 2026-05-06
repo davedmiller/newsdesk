@@ -138,7 +138,7 @@ class TestConfigDefaults:
         assert "queue_file" in config
         assert "history_file" in config
         assert config["remote_machines"] == []
-        assert config["pushover_enabled"] is True
+        assert config["pushover_enabled"] is False
         assert config["pushover_projects_default"] is True
 
 

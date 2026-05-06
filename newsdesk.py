@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "queue_file": "~/.local/share/newsdesk/queue.jsonl",
     "history_file": "~/.local/share/newsdesk/history.jsonl",
     "remote_machines": [],
-    "pushover_enabled": True,
+    "pushover_enabled": False,
     "pushover_projects_default": True,
 }
 

@@ -41,8 +41,8 @@ newsdesk send "Deploy Done" "All tests passed" --priority 1 --project myapp
 ### Watch for notifications
 
 ```bash
-newsdesk watch              # local only, Pushover on if tokens exist
-newsdesk watch --pushover   # force Pushover relay on
+newsdesk watch              # Pushover relay OFF by default (opt-in)
+newsdesk watch --pushover   # turn Pushover relay on for this session
 newsdesk watch --no-pushover
 ```
 
