@@ -111,9 +111,40 @@ def priority_icon(priority):
     return PRIORITY_ICONS.get(priority, PRIORITY_ICONS[0])
 
 
-def should_bell(priority):
-    """Return True if this priority should ring the terminal bell."""
-    return priority >= 1
+DEFAULT_BELL_THRESHOLD = 1
+BELL_THRESHOLD_CYCLE = [1, 0, -1, None]
+
+
+def should_bell(priority, threshold):
+    """Return True if this priority should ring the terminal bell.
+
+    Priority -2 (silent) never bells. threshold=None disables bell entirely.
+    """
+    if threshold is None or priority == -2:
+        return False
+    return priority >= threshold
+
+
+def cycle_bell_threshold(current):
+    """Cycle to the next bell threshold: 1 -> 0 -> -1 -> off (None) -> 1."""
+    try:
+        idx = BELL_THRESHOLD_CYCLE.index(current)
+    except ValueError:
+        return DEFAULT_BELL_THRESHOLD
+    return BELL_THRESHOLD_CYCLE[(idx + 1) % len(BELL_THRESHOLD_CYCLE)]
+
+
+def bell_threshold_label(threshold):
+    """Human-readable label for a bell threshold value."""
+    if threshold is None:
+        return "off"
+    if threshold == 1:
+        return "high+ (default)"
+    if threshold == 0:
+        return "normal+"
+    if threshold == -1:
+        return "quiet+"
+    return f"≥{threshold}"
 
 
 def should_display(entry, show_silent=False):
@@ -408,6 +439,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
     history_offset = 0
     help_page = 0           # 0 = keys, 1 = priority reference
     show_silent = False     # whether to display priority -2 entries
+    bell_threshold = DEFAULT_BELL_THRESHOLD  # priority >= this rings the bell; None = off
     status_msg = ""         # transient message shown on status line
     status_msg_until = 0    # timestamp when status_msg expires
     poll_blink = False      # toggles each loop for activity indicator
@@ -427,7 +459,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                     po_state.ensure_project(entry.get("project", DEFAULT_PROJECT))
                     if should_display(entry, show_silent):
                         display_lines.append(format_entry(entry))
-                        if should_bell(entry.get("priority", 0)):
+                        if should_bell(entry.get("priority", 0), bell_threshold):
                             curses.beep()
                     if should_forward_pushover(entry) and po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
                         if app_token and user_key:
@@ -443,8 +475,9 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 
         # Header
         silent_indicator = " [silent ON]" if show_silent else ""
+        bell_indicator = f" [bell: {bell_threshold_label(bell_threshold)}]" if bell_threshold != DEFAULT_BELL_THRESHOLD else ""
         mode_label = {"latest": "LATEST", "history": "HISTORY", "pushover": "PUSHOVER", "help": "HELP"}.get(mode, mode.upper())
-        header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover si(V)lent (Q)uit (?)help{silent_indicator}"
+        header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover (B)ell si(V)lent (Q)uit (?)help{silent_indicator}{bell_indicator}"
         remotes = config["remote_machines"]
         if len(remotes) == 1:
             poll_info = f"polling local + {remotes[0]['host']}"
@@ -502,6 +535,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 "  C   Clear the latest view",
                 "  S   Save history snapshot to a .log file",
                 "  V   Toggle visibility of silent (priority -2) messages",
+                "  B   Cycle bell threshold (high+ → normal+ → quiet+ → off)",
                 "  P   Pushover settings — toggle forwarding per project",
                 "  Q   Quit the watcher",
                 "  ?   This help screen",
@@ -528,16 +562,20 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             app_status = "✓ found" if app_token else "✗ missing"
             key_status = "✓ found" if user_key else "✗ missing"
             po_active = "active" if pushover_enabled else "inactive"
+            def bell_cell(p):
+                return "yes" if should_bell(p, bell_threshold) else "no "
             help_pages.append([
                 "Priority reference:",
                 "",
+                f"Bell threshold: {bell_threshold_label(bell_threshold)} (B key cycles)",
+                "",
                 "  Priority   Icon   Bell   Display          Pushover",
                 "  ────────   ────   ────   ───────          ────────",
-                "  -2 silent  (none)  no    hidden (V key)   never",
-                "  -1 quiet   (none)  no    yes              yes",
-                "   0 normal  \u2705      no    yes              yes",
-                "   1 high    \U0001f514      yes   yes              yes",
-                "   2 urgent  \U0001f514      yes   yes              yes",
+                f"  -2 silent  (none)  {bell_cell(-2)}   hidden (V key)   never",
+                f"  -1 quiet   (none)  {bell_cell(-1)}   yes              yes",
+                f"   0 normal  \u2705      {bell_cell(0)}   yes              yes",
+                f"   1 high    \U0001f514      {bell_cell(1)}   yes              yes",
+                f"   2 urgent  \U0001f514      {bell_cell(2)}   yes              yes",
                 "",
                 "Use --priority N with 'newsdesk send' to set priority.",
                 "Pushover relay also respects per-project toggles (P key).",
@@ -632,6 +670,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             elif ch in (ord("v"), ord("V")):
                 show_silent = not show_silent
                 status_msg = f"Silent messages: {'shown' if show_silent else 'hidden'}"
+                status_msg_until = time.time() + 3
+            elif ch in (ord("b"), ord("B")):
+                bell_threshold = cycle_bell_threshold(bell_threshold)
+                status_msg = f"Bell: {bell_threshold_label(bell_threshold)}"
                 status_msg_until = time.time() + 3
             elif ch in (ord("p"), ord("P")):
                 mode = "pushover"

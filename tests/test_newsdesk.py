@@ -248,16 +248,53 @@ class TestPriorityIconMapping:
 
 
 class TestPriorityBell:
-    """U10: priority >= 1 triggers bell."""
+    """U10: priority >= threshold triggers bell."""
 
-    def test_bell_for_high(self):
-        assert nd.should_bell(1) is True
-        assert nd.should_bell(2) is True
+    def test_bell_for_high_default_threshold(self):
+        assert nd.should_bell(1, 1) is True
+        assert nd.should_bell(2, 1) is True
 
-    def test_no_bell_for_low(self):
-        assert nd.should_bell(0) is False
-        assert nd.should_bell(-1) is False
-        assert nd.should_bell(-2) is False
+    def test_no_bell_for_low_default_threshold(self):
+        assert nd.should_bell(0, 1) is False
+        assert nd.should_bell(-1, 1) is False
+        assert nd.should_bell(-2, 1) is False
+
+    def test_threshold_zero_includes_normal(self):
+        assert nd.should_bell(0, 0) is True
+        assert nd.should_bell(1, 0) is True
+        assert nd.should_bell(-1, 0) is False
+
+    def test_threshold_minus_one_includes_quiet(self):
+        assert nd.should_bell(-1, -1) is True
+        assert nd.should_bell(0, -1) is True
+        assert nd.should_bell(-2, -1) is False  # silent never bells
+
+    def test_threshold_none_disables_bell(self):
+        assert nd.should_bell(2, None) is False
+        assert nd.should_bell(0, None) is False
+        assert nd.should_bell(-1, None) is False
+
+    def test_silent_priority_never_bells(self):
+        # -2 is silent by definition — no threshold should make it bell
+        assert nd.should_bell(-2, 1) is False
+        assert nd.should_bell(-2, 0) is False
+        assert nd.should_bell(-2, -1) is False
+
+
+class TestCycleBellThreshold:
+    """U10b: B key cycles bell threshold: 1 -> 0 -> -1 -> off -> 1."""
+
+    def test_cycle_from_default(self):
+        assert nd.cycle_bell_threshold(1) == 0
+
+    def test_cycle_loosens(self):
+        assert nd.cycle_bell_threshold(0) == -1
+
+    def test_cycle_to_off(self):
+        assert nd.cycle_bell_threshold(-1) is None
+
+    def test_cycle_from_off_back_to_default(self):
+        assert nd.cycle_bell_threshold(None) == 1
 
 
 class TestPrioritySilentSkipped:
