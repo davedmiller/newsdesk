@@ -23,6 +23,9 @@ DEFAULT_PROJECT = "general"
 STALE_PROCESSING_AGE = 86400  # 1 day in seconds
 DISPLAY_FIELD_WIDTH = 15
 LINK_MARKER = "\U0001f517"  # 🔗 — shown in the watch UI when an entry carries a url
+# Pushover priority-2 (emergency) re-alerts until acknowledged and REQUIRES these.
+PUSHOVER_EMERGENCY_RETRY_S = 60     # re-alert interval (Pushover minimum 30)
+PUSHOVER_EMERGENCY_EXPIRE_S = 3600  # stop re-alerting after this long (Pushover max 10800)
 
 DEFAULT_CONFIG = {
     "queue_file": "~/.local/share/newsdesk/queue.jsonl",
@@ -281,14 +284,22 @@ def consume_remote_queue(host, queue_file):
 def forward_to_pushover(entry, app_token, user_key):
     """Forward a notification to Pushover via curl. Best-effort."""
     try:
+        priority = entry.get("priority", 0)
         cmd = [
             "curl", "-s",
             "--form-string", f"token={app_token}",
             "--form-string", f"user={user_key}",
             "--form-string", f"title={entry['title']}",
             "--form-string", f"message={entry['message']}",
-            "--form-string", f"priority={entry.get('priority', 0)}",
+            "--form-string", f"priority={priority}",
         ]
+        # Priority 2 is a Pushover "emergency": it re-alerts until acknowledged and
+        # the API rejects the whole message unless retry/expire are supplied.
+        if priority >= 2:
+            cmd += [
+                "--form-string", f"retry={PUSHOVER_EMERGENCY_RETRY_S}",
+                "--form-string", f"expire={PUSHOVER_EMERGENCY_EXPIRE_S}",
+            ]
         # Optional supplementary link → a tappable button in the notification.
         # url_title is meaningless to Pushover without url, so gate it on url.
         if entry.get("url"):

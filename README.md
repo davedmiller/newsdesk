@@ -74,7 +74,8 @@ Pushover forwarding is governed by a single setting, **`pushover_min_priority`**
 (default `-1` = forward everything except silent). Raise it to forward only more
 important messages — e.g. `1` keeps priority-0 chatter on the console/feed but off
 your phone. Priority `-2` is never forwarded. `--no-pushover` suppresses forwarding
-for one `watch` session.
+for one `watch` session. Priority `2` is a Pushover **emergency** — it re-alerts until
+you acknowledge it in the app (`retry`/`expire` are sent automatically).
 
 ### Initialize config
 

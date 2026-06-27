@@ -651,3 +651,31 @@ class TestForwardToPushoverUrl:
         nd.forward_to_pushover(entry, "apptok", "userkey")
         cmd = captured["cmd"]
         assert not any(str(x).startswith("url_title=") for x in cmd)
+
+
+class TestForwardToPushoverEmergency:
+    """U: priority-2 (Pushover emergency) sends retry/expire; lower priorities don't.
+
+    Pushover REQUIRES retry+expire for priority 2 or rejects the whole message.
+    """
+
+    def test_emergency_params_for_priority_2(self, monkeypatch):
+        captured = TestForwardToPushoverUrl._capture_curl(monkeypatch)
+        nd.forward_to_pushover({"title": "T", "message": "M", "priority": 2}, "app", "usr")
+        cmd = captured["cmd"]
+        assert "priority=2" in cmd
+        assert f"retry={nd.PUSHOVER_EMERGENCY_RETRY_S}" in cmd
+        assert f"expire={nd.PUSHOVER_EMERGENCY_EXPIRE_S}" in cmd
+
+    def test_no_emergency_params_below_priority_2(self, monkeypatch):
+        captured = TestForwardToPushoverUrl._capture_curl(monkeypatch)
+        nd.forward_to_pushover({"title": "T", "message": "M", "priority": 1}, "app", "usr")
+        cmd = captured["cmd"]
+        assert not any(str(x).startswith("retry=") for x in cmd)
+        assert not any(str(x).startswith("expire=") for x in cmd)
+
+    def test_pushover_emergency_constants_valid(self):
+        # Pushover constraints: retry >= 30s, expire <= 10800s
+        assert nd.PUSHOVER_EMERGENCY_RETRY_S >= 30
+        assert nd.PUSHOVER_EMERGENCY_EXPIRE_S <= 10800
+        assert nd.PUSHOVER_EMERGENCY_EXPIRE_S >= nd.PUSHOVER_EMERGENCY_RETRY_S
