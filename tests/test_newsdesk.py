@@ -320,6 +320,28 @@ class TestSilentSkipsPushover:
             assert nd.should_forward_pushover({"priority": p}) is True
 
 
+class TestPushoverMinPriority:
+    """U: pushover_min_priority gates forwarding; priority -2 is always silent."""
+
+    def test_default_forwards_all_nonsilent(self):
+        # default threshold (-1) preserves prior behaviour
+        for p in (-1, 0, 1, 2):
+            assert nd.should_forward_pushover({"priority": p}, -1) is True
+
+    def test_threshold_blocks_below(self):
+        assert nd.should_forward_pushover({"priority": 0}, 1) is False
+        assert nd.should_forward_pushover({"priority": -1}, 1) is False
+        assert nd.should_forward_pushover({"priority": 1}, 1) is True
+        assert nd.should_forward_pushover({"priority": 2}, 1) is True
+
+    def test_silent_always_blocked_even_below_threshold(self):
+        # -2 never forwards regardless of how low the threshold is set
+        assert nd.should_forward_pushover({"priority": -2}, -2) is False
+
+    def test_config_default_threshold(self):
+        assert nd.DEFAULT_CONFIG["pushover_min_priority"] == -1
+
+
 class TestSilentVisibleInHistory:
     """U22: show_silent flag controls whether -2 entries appear in display."""
 

@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
     "remote_machines": [],
     "pushover_enabled": False,
     "pushover_projects_default": True,
+    "pushover_min_priority": -1,  # only forward priority >= this to Pushover (-2 always silent)
 }
 
 PRIORITY_ICONS = {
@@ -155,9 +156,15 @@ def should_display(entry, show_silent=False):
     return True
 
 
-def should_forward_pushover(entry):
-    """Return True if this entry should be forwarded to Pushover. Priority -2 is never forwarded."""
-    return entry.get("priority", 0) != -2
+def should_forward_pushover(entry, min_priority=-1):
+    """Return True if this entry should be forwarded to Pushover.
+
+    Priority -2 is never forwarded (hard rule). Otherwise the entry must meet
+    min_priority — lets the watcher keep low-value chatter (e.g. priority-0
+    end-of-turn pings) on the console/feed without pushing it to the phone.
+    """
+    priority = entry.get("priority", 0)
+    return priority != -2 and priority >= min_priority
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +485,7 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                         display_lines.append(format_entry(entry))
                         if should_bell(entry.get("priority", 0), bell_threshold):
                             curses.beep()
-                    if should_forward_pushover(entry) and po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
+                    if should_forward_pushover(entry, config.get("pushover_min_priority", -1)) and po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
                         if app_token and user_key:
                             forward_to_pushover(entry, app_token, user_key)
 
