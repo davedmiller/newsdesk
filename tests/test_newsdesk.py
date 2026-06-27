@@ -139,8 +139,7 @@ class TestConfigDefaults:
         assert "queue_file" in config
         assert "history_file" in config
         assert config["remote_machines"] == []
-        assert config["pushover_enabled"] is False
-        assert config["pushover_projects_default"] is True
+        assert config["pushover_min_priority"] == -1
 
 
 class TestConfigLoads:
@@ -154,13 +153,10 @@ class TestConfigLoads:
             "remote_machines": [
                 {"name": "box", "host": "box.local", "queue_file": "/tmp/q.jsonl"}
             ],
-            "pushover_enabled": False,
-            "pushover_projects_default": False,
         }
         cfg_path.write_text(json.dumps(cfg_data))
         config = nd.load_config(str(cfg_path))
         assert config["queue_file"] == "/tmp/test/queue.jsonl"
-        assert config["pushover_enabled"] is False
         assert len(config["remote_machines"]) == 1
         assert config["remote_machines"][0]["name"] == "box"
 
@@ -170,8 +166,6 @@ class TestConfigLoads:
             "queue_file": "~/newsdesk/queue.jsonl",
             "history_file": "~/newsdesk/history.jsonl",
             "remote_machines": [],
-            "pushover_enabled": True,
-            "pushover_projects_default": True,
         }
         cfg_path.write_text(json.dumps(cfg_data))
         config = nd.load_config(str(cfg_path))
@@ -192,8 +186,6 @@ class TestMultiMachineConfig:
             "queue_file": "/tmp/q.jsonl",
             "history_file": "/tmp/h.jsonl",
             "remote_machines": machines,
-            "pushover_enabled": True,
-            "pushover_projects_default": True,
         }
         cfg_path.write_text(json.dumps(cfg_data))
         config = nd.load_config(str(cfg_path))
@@ -357,106 +349,19 @@ class TestSilentVisibleInHistory:
             assert nd.should_display({"priority": p}, show_silent=True) is True
 
 
-class TestPushoverProjectToggle:
-    """U14: ALL OFF disables all; ALL ON respects per-project."""
+class TestPushoverStatusLabel:
+    """U: pushover_status_label summarizes forwarding state for the watch header."""
 
-    def test_all_off_blocks_everything(self):
-        state = nd.PushoverState(all_enabled=False, projects_default=True)
-        state.ensure_project("pcm")
-        assert state.should_forward("pcm") is False
+    def test_suppressed(self):
+        assert nd.pushover_status_label(True, "a", "b", 1) == "off (--no-pushover)"
 
-    def test_all_on_respects_project(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        state.toggle_project("pcm")
-        assert state.should_forward("pcm") is False
-        assert state.should_forward("other") is True
+    def test_no_tokens(self):
+        assert nd.pushover_status_label(False, None, None, 1) == "no keychain tokens"
+        assert nd.pushover_status_label(False, "a", None, 1) == "no keychain tokens"
 
-    def test_all_on_project_on(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        assert state.should_forward("pcm") is True
-
-
-class TestPushoverEnableDisableAll:
-    """U28: enable_all/disable_all control master switch without touching projects."""
-
-    def test_disable_all_blocks_everything(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        state.disable_all()
-        assert state.all_enabled is False
-        assert state.should_forward("pcm") is False
-
-    def test_enable_all_restores_forwarding(self):
-        state = nd.PushoverState(all_enabled=False, projects_default=True)
-        state.ensure_project("pcm")
-        state.enable_all()
-        assert state.all_enabled is True
-        assert state.should_forward("pcm") is True
-
-    def test_disable_all_preserves_project_state(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        state.ensure_project("other")
-        state.toggle_project("pcm")  # pcm OFF, other ON
-        state.disable_all()
-        state.enable_all()
-        # Project states unchanged
-        assert state.should_forward("pcm") is False
-        assert state.should_forward("other") is True
-
-    def test_enable_all_when_already_enabled(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.enable_all()
-        assert state.all_enabled is True
-
-    def test_disable_all_when_already_disabled(self):
-        state = nd.PushoverState(all_enabled=False, projects_default=True)
-        state.disable_all()
-        assert state.all_enabled is False
-
-
-class TestPushoverNewProjectDefault:
-    """U15: new project inherits pushover_projects_default."""
-
-    def test_default_on(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        assert state.should_forward("brand_new") is True
-
-    def test_default_off(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=False)
-        assert state.should_forward("brand_new") is False
-
-
-class TestPushoverStatusLine:
-    """U27: status_line is compact — no per-project details when all enabled."""
-
-    def test_all_on_no_muted(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        state.ensure_project("newsdesk")
-        assert state.status_line() == "✓"
-
-    def test_all_off(self):
-        state = nd.PushoverState(all_enabled=False, projects_default=True)
-        assert state.status_line() == "✗"
-
-    def test_all_on_some_muted(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("pcm")
-        state.ensure_project("newsdesk")
-        state.toggle_project("pcm")
-        assert state.status_line() == "✓ (1 muted)"
-
-    def test_all_on_multiple_muted(self):
-        state = nd.PushoverState(all_enabled=True, projects_default=True)
-        state.ensure_project("a")
-        state.ensure_project("b")
-        state.ensure_project("c")
-        state.toggle_project("a")
-        state.toggle_project("c")
-        assert state.status_line() == "✓ (2 muted)"
+    def test_threshold_shown(self):
+        assert nd.pushover_status_label(False, "a", "b", 1) == "≥ 1"
+        assert nd.pushover_status_label(False, "a", "b", -1) == "≥ -1"
 
 
 class TestMachineNameInSend:

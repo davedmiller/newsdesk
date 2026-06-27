@@ -28,8 +28,6 @@ DEFAULT_CONFIG = {
     "queue_file": "~/.local/share/newsdesk/queue.jsonl",
     "history_file": "~/.local/share/newsdesk/history.jsonl",
     "remote_machines": [],
-    "pushover_enabled": False,
-    "pushover_projects_default": True,
     "pushover_min_priority": -1,  # only forward priority >= this to Pushover (-2 always silent)
 }
 
@@ -167,6 +165,15 @@ def should_forward_pushover(entry, min_priority=-1):
     return priority != -2 and priority >= min_priority
 
 
+def pushover_status_label(suppressed, app_token, user_key, min_priority):
+    """Compact Pushover-forwarding state for the watch header / help screen."""
+    if suppressed:
+        return "off (--no-pushover)"
+    if not (app_token and user_key):
+        return "no keychain tokens"
+    return f"≥ {min_priority}"  # e.g. "≥ 1"
+
+
 # ---------------------------------------------------------------------------
 # Display formatting
 # ---------------------------------------------------------------------------
@@ -268,59 +275,6 @@ def consume_remote_queue(host, queue_file):
 
 
 # ---------------------------------------------------------------------------
-# Pushover state
-# ---------------------------------------------------------------------------
-class PushoverState:
-    """Tracks per-project Pushover forwarding toggles."""
-
-    def __init__(self, all_enabled=True, projects_default=True):
-        self.all_enabled = all_enabled
-        self.projects_default = projects_default
-        self._projects = {}  # project_name -> bool
-
-    def ensure_project(self, project):
-        """Register a project if not already known."""
-        if project not in self._projects:
-            self._projects[project] = self.projects_default
-
-    def toggle_project(self, project):
-        """Toggle a project's forwarding state."""
-        self.ensure_project(project)
-        self._projects[project] = not self._projects[project]
-
-    def toggle_all(self):
-        """Toggle the ALL master switch."""
-        self.all_enabled = not self.all_enabled
-
-    def enable_all(self):
-        """Turn the master switch ON (does not change per-project state)."""
-        self.all_enabled = True
-
-    def disable_all(self):
-        """Turn the master switch OFF (does not change per-project state)."""
-        self.all_enabled = False
-
-    def should_forward(self, project):
-        """Return True if a notification for this project should be forwarded."""
-        if not self.all_enabled:
-            return False
-        self.ensure_project(project)
-        return self._projects[project]
-
-    def known_projects(self):
-        """Return list of (project_name, enabled) tuples."""
-        return sorted(self._projects.items())
-
-    def status_line(self):
-        """Return a compact status string for the header."""
-        if not self.all_enabled:
-            return "✗"
-        muted = [name for name, enabled in self.known_projects() if not enabled]
-        if muted:
-            return f"✓ ({len(muted)} muted)"
-        return "✓"
-
-
 # ---------------------------------------------------------------------------
 # Pushover forwarding
 # ---------------------------------------------------------------------------
@@ -435,31 +389,24 @@ def _maybe_rotate(queue_path):
 # ---------------------------------------------------------------------------
 # Watch (curses UI)
 # ---------------------------------------------------------------------------
-def cmd_watch_curses(stdscr, config, pushover_override):
+def cmd_watch_curses(stdscr, config, no_pushover):
     """Main watch loop inside curses."""
     curses.curs_set(0)
     stdscr.nodelay(True)
     stdscr.timeout(int(POLL_INTERVAL_S * 1000))
 
-    pushover_enabled = config["pushover_enabled"]
-    if pushover_override is not None:
-        pushover_enabled = pushover_override
+    # Forwarding is governed entirely by config["pushover_min_priority"]; the only
+    # session control is --no-pushover, which suppresses all forwarding this run.
+    pushover_suppressed = bool(no_pushover)
+    min_priority = config.get("pushover_min_priority", -1)
 
-    po_state = PushoverState(
-        all_enabled=pushover_enabled,
-        projects_default=config["pushover_projects_default"],
-    )
-
-    # Read Pushover tokens if enabled
     app_token = user_key = None
-    if pushover_enabled:
+    if not pushover_suppressed:
         app_token = read_keychain_token("newsdesk-app-token")
         user_key = read_keychain_token("newsdesk-user-key")
-        if not app_token or not user_key:
-            pushover_enabled = False
 
     display_lines = []
-    mode = "latest"  # latest | history | pushover | help
+    mode = "latest"  # latest | history | help
     history_offset = 0
     help_page = 0           # 0 = keys, 1 = priority reference
     show_silent = False     # whether to display priority -2 entries
@@ -470,24 +417,22 @@ def cmd_watch_curses(stdscr, config, pushover_override):
 
     while True:
         # Poll queues
-        if mode != "pushover":
-            new_entries = consume_local_queue(config["queue_file"])
-            for machine in config["remote_machines"]:
-                new_entries.extend(
-                    consume_remote_queue(machine["host"], machine["queue_file"])
-                )
+        new_entries = consume_local_queue(config["queue_file"])
+        for machine in config["remote_machines"]:
+            new_entries.extend(
+                consume_remote_queue(machine["host"], machine["queue_file"])
+            )
 
-            if new_entries:
-                append_to_history(config["history_file"], new_entries)
-                for entry in new_entries:
-                    po_state.ensure_project(entry.get("project", DEFAULT_PROJECT))
-                    if should_display(entry, show_silent):
-                        display_lines.append(format_entry(entry))
-                        if should_bell(entry.get("priority", 0), bell_threshold):
-                            curses.beep()
-                    if should_forward_pushover(entry, config.get("pushover_min_priority", -1)) and po_state.should_forward(entry.get("project", DEFAULT_PROJECT)):
-                        if app_token and user_key:
-                            forward_to_pushover(entry, app_token, user_key)
+        if new_entries:
+            append_to_history(config["history_file"], new_entries)
+            for entry in new_entries:
+                if should_display(entry, show_silent):
+                    display_lines.append(format_entry(entry))
+                    if should_bell(entry.get("priority", 0), bell_threshold):
+                        curses.beep()
+                # tokens are None when --no-pushover suppressed forwarding for this run
+                if app_token and user_key and should_forward_pushover(entry, min_priority):
+                    forward_to_pushover(entry, app_token, user_key)
 
         # Clear expired status message
         if status_msg and time.time() > status_msg_until:
@@ -500,8 +445,8 @@ def cmd_watch_curses(stdscr, config, pushover_override):
         # Header
         silent_indicator = " [silent ON]" if show_silent else ""
         bell_indicator = f" [bell: {bell_threshold_label(bell_threshold)}]" if bell_threshold != DEFAULT_BELL_THRESHOLD else ""
-        mode_label = {"latest": "LATEST", "history": "HISTORY", "pushover": "PUSHOVER", "help": "HELP"}.get(mode, mode.upper())
-        header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (P)ushover (B)ell si(V)lent (Q)uit (?)help{silent_indicator}{bell_indicator}"
+        mode_label = {"latest": "LATEST", "history": "HISTORY", "help": "HELP"}.get(mode, mode.upper())
+        header = f"newsdesk [{mode_label}] \u2014 (L)atest (H)istory (C)lear (S)ave (B)ell si(V)lent (Q)uit (?)help{silent_indicator}{bell_indicator}"
         remotes = config["remote_machines"]
         if len(remotes) == 1:
             poll_info = f"polling local + {remotes[0]['host']}"
@@ -511,10 +456,11 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             poll_info = "polling local"
         poll_blink = not poll_blink
         blink_char = "\u25cf" if poll_blink else " "
+        po_status = pushover_status_label(pushover_suppressed, app_token, user_key, min_priority)
         if status_msg:
             status = status_msg
         else:
-            status = f"{blink_char} Pushover: {po_state.status_line()}  \u23f3 {poll_info}"
+            status = f"{blink_char} Pushover: {po_status}  \u23f3 {poll_info}"
 
         try:
             stdscr.addnstr(0, 0, header, width - 1)
@@ -560,7 +506,6 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 "  S   Save history snapshot to a .log file",
                 "  V   Toggle visibility of silent (priority -2) messages",
                 "  B   Cycle bell threshold (high+ → normal+ → quiet+ → off)",
-                "  P   Pushover settings — toggle forwarding per project",
                 "  Q   Quit the watcher",
                 "  ?   This help screen",
                 "",
@@ -585,9 +530,10 @@ def cmd_watch_curses(stdscr, config, pushover_override):
             # Page 2: priority reference & Pushover status
             app_status = "✓ found" if app_token else "✗ missing"
             key_status = "✓ found" if user_key else "✗ missing"
-            po_active = "active" if pushover_enabled else "inactive"
             def bell_cell(p):
                 return "yes" if should_bell(p, bell_threshold) else "no "
+            def push_cell(p):
+                return "yes" if (p != -2 and p >= min_priority) else "no "
             help_pages.append([
                 "Priority reference:",
                 "",
@@ -596,15 +542,15 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 "  Priority   Icon   Bell   Display          Pushover",
                 "  ────────   ────   ────   ───────          ────────",
                 f"  -2 silent  (none)  {bell_cell(-2)}   hidden (V key)   never",
-                f"  -1 quiet   (none)  {bell_cell(-1)}   yes              yes",
-                f"   0 normal  \u2705      {bell_cell(0)}   yes              yes",
-                f"   1 high    \U0001f514      {bell_cell(1)}   yes              yes",
-                f"   2 urgent  \U0001f514      {bell_cell(2)}   yes              yes",
+                f"  -1 quiet   (none)  {bell_cell(-1)}   yes              {push_cell(-1)}",
+                f"   0 normal  \u2705      {bell_cell(0)}   yes              {push_cell(0)}",
+                f"   1 high    \U0001f514      {bell_cell(1)}   yes              {push_cell(1)}",
+                f"   2 urgent  \U0001f514      {bell_cell(2)}   yes              {push_cell(2)}",
                 "",
                 "Use --priority N with 'newsdesk send' to set priority.",
-                "Pushover relay also respects per-project toggles (P key).",
+                f"Pushover forwards priority ≥ {min_priority} (config: pushover_min_priority).",
                 "",
-                f"Pushover status: {po_active}",
+                f"Pushover status: {po_status}",
                 f"  Keychain newsdesk-app-token: {app_status}",
                 f"  Keychain newsdesk-user-key:  {key_status}",
             ])
@@ -620,23 +566,6 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                     stdscr.addnstr(content_start + i, 0, padded, width - 1)
                 except curses.error:
                     pass
-
-        elif mode == "pushover":
-            try:
-                stdscr.addnstr(content_start, 0, "Pushover forwarding:", width - 1)
-                stdscr.addnstr(content_start + 1, 0,
-                               f"  [+] Turn all ON   [-] Turn all OFF   "
-                               f"(master: {'ON' if po_state.all_enabled else 'OFF'})",
-                               width - 1)
-                for idx, (name, enabled) in enumerate(po_state.known_projects()):
-                    label = f"  [{idx + 1}] {name} {'✓' if enabled else '✗'}"
-                    stdscr.addnstr(content_start + 2 + idx, 0, label, width - 1)
-                prompt_row = content_start + 2 + len(po_state.known_projects())
-                stdscr.addnstr(prompt_row, 0,
-                               "Press number to toggle, +/- for master, Esc to close",
-                               width - 1)
-            except curses.error:
-                pass
 
         stdscr.refresh()
 
@@ -657,18 +586,6 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 help_page += 1
             elif ch == curses.KEY_LEFT or ch == ord("h"):
                 help_page = max(0, help_page - 1)
-        elif mode == "pushover":
-            if ch == 27:  # Esc
-                mode = "latest"
-            elif ch == ord("+") or ch == ord("="):
-                po_state.enable_all()
-            elif ch == ord("-") or ch == ord("_"):
-                po_state.disable_all()
-            elif ord("1") <= ch <= ord("9"):
-                idx = ch - ord("1")
-                projects = po_state.known_projects()
-                if idx < len(projects):
-                    po_state.toggle_project(projects[idx][0])
         else:
             if ch in (ord("q"), ord("Q")):
                 break
@@ -699,8 +616,6 @@ def cmd_watch_curses(stdscr, config, pushover_override):
                 bell_threshold = cycle_bell_threshold(bell_threshold)
                 status_msg = f"Bell: {bell_threshold_label(bell_threshold)}"
                 status_msg_until = time.time() + 3
-            elif ch in (ord("p"), ord("P")):
-                mode = "pushover"
             elif ch == ord("?"):
                 mode = "help"
             elif mode == "history":
@@ -744,13 +659,7 @@ def cmd_watch(args):
     """Handle the 'watch' subcommand."""
     config = load_config(os.path.expanduser("~/.config/newsdesk/config.json"))
 
-    pushover_override = None
-    if args.pushover:
-        pushover_override = True
-    elif args.no_pushover:
-        pushover_override = False
-
-    curses.wrapper(cmd_watch_curses, config, pushover_override)
+    curses.wrapper(cmd_watch_curses, config, args.no_pushover)
     return 0
 
 
@@ -790,8 +699,8 @@ def main():
                         help="Label for --url (ignored without --url)")
 
     p_watch = sub.add_parser("watch", help="Watch for notifications")
-    p_watch.add_argument("--pushover", action="store_true", default=False)
-    p_watch.add_argument("--no-pushover", action="store_true", default=False)
+    p_watch.add_argument("--no-pushover", action="store_true", default=False,
+                         help="Suppress all Pushover forwarding for this session")
 
     sub.add_parser("init", help="Initialize config")
 

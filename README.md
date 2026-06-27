@@ -8,7 +8,7 @@ Unified notification hub CLI for macOS. Centralizes notifications from multiple 
 - **Watch** a curses TUI that polls local and remote queues via SSH
 - **Relay** notifications to Pushover for mobile alerts
 - **Priority levels** from silent (-2) to emergency (2) with configurable display, bell, and relay behavior
-- **Per-project toggles** for Pushover forwarding
+- **Priority-threshold forwarding** — only priority ≥ `pushover_min_priority` reaches Pushover
 - **Auto-detection** of project name (from git repo) and machine name (from hostname)
 - **File-based queues** using JSONL — no server, no database
 - **macOS Keychain** for Pushover credentials
@@ -44,9 +44,8 @@ newsdesk send "Backup degraded" "Ann TM stale, NAS 91%" --priority 1 \
 ### Watch for notifications
 
 ```bash
-newsdesk watch              # Pushover relay OFF by default (opt-in)
-newsdesk watch --pushover   # turn Pushover relay on for this session
-newsdesk watch --no-pushover
+newsdesk watch                # forwards priority >= pushover_min_priority to Pushover
+newsdesk watch --no-pushover  # suppress all Pushover forwarding for this session
 ```
 
 ### Watcher keyboard shortcuts
@@ -58,7 +57,6 @@ newsdesk watch --no-pushover
 | C | Clear the latest view |
 | S | Save history snapshot to a log file |
 | V | Toggle visibility of silent (priority -2) messages |
-| P | Pushover settings — toggle forwarding per project |
 | ? | Help (two pages: shortcuts + priority reference) |
 | Q | Quit |
 
@@ -67,10 +65,16 @@ newsdesk watch --no-pushover
 | Priority | Icon | Bell | Display | Pushover |
 |----------|------|------|---------|----------|
 | -2 silent | — | no | hidden (V to show) | never |
-| -1 quiet | — | no | yes | yes |
-| 0 normal | ✅ | no | yes | yes |
-| 1 high | 🔔 | yes | yes | yes |
-| 2 emergency | 🔔 | yes | yes | yes |
+| -1 quiet | — | no | yes | if ≥ threshold |
+| 0 normal | ✅ | no | yes | if ≥ threshold |
+| 1 high | 🔔 | yes | yes | if ≥ threshold |
+| 2 emergency | 🔔 | yes | yes | if ≥ threshold |
+
+Pushover forwarding is governed by a single setting, **`pushover_min_priority`**
+(default `-1` = forward everything except silent). Raise it to forward only more
+important messages — e.g. `1` keeps priority-0 chatter on the console/feed but off
+your phone. Priority `-2` is never forwarded. `--no-pushover` suppresses forwarding
+for one `watch` session.
 
 ### Initialize config
 
