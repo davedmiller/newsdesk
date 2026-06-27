@@ -22,6 +22,7 @@ SSH_COMMAND_TIMEOUT = 3
 DEFAULT_PROJECT = "general"
 STALE_PROCESSING_AGE = 86400  # 1 day in seconds
 DISPLAY_FIELD_WIDTH = 15
+LINK_MARKER = "\U0001f517"  # 🔗 — shown in the watch UI when an entry carries a url
 
 DEFAULT_CONFIG = {
     "queue_file": "~/.local/share/newsdesk/queue.jsonl",
@@ -183,6 +184,8 @@ def format_entry(entry):
         parts.append(_fit_field(machine))
     if icon:
         parts.append(icon)
+    if entry.get("url"):
+        parts.append(LINK_MARKER)  # left of the message so width-clipping keeps it visible
     parts.append(f"{title} \u2014 {message}")
     return "  ".join(parts)
 
@@ -317,18 +320,22 @@ class PushoverState:
 def forward_to_pushover(entry, app_token, user_key):
     """Forward a notification to Pushover via curl. Best-effort."""
     try:
-        subprocess.run(
-            [
-                "curl", "-s",
-                "--form-string", f"token={app_token}",
-                "--form-string", f"user={user_key}",
-                "--form-string", f"title={entry['title']}",
-                "--form-string", f"message={entry['message']}",
-                "--form-string", f"priority={entry.get('priority', 0)}",
-                "https://api.pushover.net/1/messages.json",
-            ],
-            capture_output=True, timeout=10,
-        )
+        cmd = [
+            "curl", "-s",
+            "--form-string", f"token={app_token}",
+            "--form-string", f"user={user_key}",
+            "--form-string", f"title={entry['title']}",
+            "--form-string", f"message={entry['message']}",
+            "--form-string", f"priority={entry.get('priority', 0)}",
+        ]
+        # Optional supplementary link → a tappable button in the notification.
+        # url_title is meaningless to Pushover without url, so gate it on url.
+        if entry.get("url"):
+            cmd += ["--form-string", f"url={entry['url']}"]
+            if entry.get("url_title"):
+                cmd += ["--form-string", f"url_title={entry['url_title']}"]
+        cmd.append("https://api.pushover.net/1/messages.json")
+        subprocess.run(cmd, capture_output=True, timeout=10)
     except Exception:
         pass
 
@@ -373,8 +380,14 @@ def detect_project(directory=None):
 # ---------------------------------------------------------------------------
 # Send
 # ---------------------------------------------------------------------------
-def send_notification(queue_path, title, message, priority, project=None):
-    """Append a notification to the queue file. Creates parent dirs if needed."""
+def send_notification(queue_path, title, message, priority, project=None,
+                      url=None, url_title=None):
+    """Append a notification to the queue file. Creates parent dirs if needed.
+
+    url/url_title are an optional supplementary link forwarded to Pushover as a
+    tappable button. They are persisted only when set, so existing entries that
+    carry no link keep their minimal shape.
+    """
     if project is None:
         project = DEFAULT_PROJECT
 
@@ -386,6 +399,10 @@ def send_notification(queue_path, title, message, priority, project=None):
         "project": project,
         "machine": get_machine_name(),
     }
+    if url:
+        entry["url"] = url
+        if url_title:
+            entry["url_title"] = url_title
 
     os.makedirs(os.path.dirname(queue_path), exist_ok=True)
 
@@ -708,6 +725,8 @@ def cmd_send(args):
             args.message,
             args.priority,
             project,
+            url=args.url,
+            url_title=args.url_title,
         )
     except Exception:
         pass  # best-effort
@@ -758,6 +777,10 @@ def main():
     p_send.add_argument("message", help="Notification message")
     p_send.add_argument("--priority", type=int, default=0, help="Priority (-2 to 2)")
     p_send.add_argument("--project", default=None, help="Project tag")
+    p_send.add_argument("--url", default=None,
+                        help="Supplementary URL — a tappable link in the Pushover notification")
+    p_send.add_argument("--url-title", default=None,
+                        help="Label for --url (ignored without --url)")
 
     p_watch = sub.add_parser("watch", help="Watch for notifications")
     p_watch.add_argument("--pushover", action="store_true", default=False)

@@ -36,6 +36,9 @@ security add-generic-password -a pushover -s newsdesk-user-key -w <USER_KEY>
 ```bash
 newsdesk send "Title" "Message"
 newsdesk send "Deploy Done" "All tests passed" --priority 1 --project myapp
+# --url adds a tappable link in the Pushover notification; --url-title labels it
+newsdesk send "Backup degraded" "Ann TM stale, NAS 91%" --priority 1 \
+  --url "http://100.70.51.21:5555/" --url-title "Open status page"
 ```
 
 ### Watch for notifications

@@ -1,6 +1,7 @@
 # ABOUTME: Unit tests for newsdesk CLI — send, config, JSONL parsing, watch helpers.
 # ABOUTME: TDD: tests are written before implementation.
 
+import argparse
 import json
 import os
 import sys
@@ -546,6 +547,25 @@ class TestFieldPadding:
         assert name in line
 
 
+class TestLinkMarkerInDisplay:
+    """U: format_entry shows LINK_MARKER iff the entry carries a url, and
+    left of the message so it survives width-clipping in the watch UI."""
+
+    def test_marker_present_when_url(self):
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": "pcm", "url": "http://x/"}
+        line = nd.format_entry(entry)
+        assert nd.LINK_MARKER in line
+        # left of the title/message so a clipped long line still shows it
+        assert line.index(nd.LINK_MARKER) < line.index("T")
+
+    def test_no_marker_without_url(self):
+        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
+                 "priority": 0, "project": "pcm"}
+        line = nd.format_entry(entry)
+        assert nd.LINK_MARKER not in line
+
+
 class TestQueueRenameReadDelete:
     """U18: rename-read-delete pattern works."""
 
@@ -618,3 +638,89 @@ class TestFreshProcessingRecovered:
         assert "New" in titles
         assert not processing.exists()
         assert not queue.exists()
+
+
+# ---------------------------------------------------------------------------
+# Supplementary URL passthrough (Pushover url / url_title)
+# ---------------------------------------------------------------------------
+
+
+class TestSendUrlPassthrough:
+    """U: send_notification persists url/url_title only when provided."""
+
+    def test_url_fields_included_when_provided(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        nd.send_notification(
+            str(queue), "T", "M", 1, "p",
+            url="http://100.70.51.21:5555/", url_title="Open status page",
+        )
+        entry = json.loads(queue.read_text().strip())
+        assert entry["url"] == "http://100.70.51.21:5555/"
+        assert entry["url_title"] == "Open status page"
+
+    def test_url_fields_omitted_when_not_provided(self, tmp_path):
+        queue = tmp_path / "queue.jsonl"
+        nd.send_notification(str(queue), "T", "M", 0, "p")
+        entry = json.loads(queue.read_text().strip())
+        assert "url" not in entry
+        assert "url_title" not in entry
+
+    def test_cmd_send_passes_url_through_to_queue(self, tmp_path, monkeypatch):
+        # Covers the argparse-args -> cmd_send -> send_notification seam.
+        queue = tmp_path / "queue.jsonl"
+        monkeypatch.setattr(nd, "load_config", lambda path: {"queue_file": str(queue)})
+        args = argparse.Namespace(
+            title="T", message="M", priority=1, project="t",
+            url="http://100.70.51.21:5555/", url_title="Open status page",
+        )
+        assert nd.cmd_send(args) == 0
+        entry = json.loads(queue.read_text().strip())
+        assert entry["url"] == "http://100.70.51.21:5555/"
+        assert entry["url_title"] == "Open status page"
+
+
+class TestForwardToPushoverUrl:
+    """U: forward_to_pushover adds url/url_title form-strings only when present."""
+
+    @staticmethod
+    def _capture_curl(monkeypatch):
+        captured = {}
+
+        def fake_run(cmd, *a, **k):
+            captured["cmd"] = cmd
+
+            class _Result:
+                returncode = 0
+
+            return _Result()
+
+        monkeypatch.setattr(nd.subprocess, "run", fake_run)
+        return captured
+
+    def test_url_included_when_present(self, monkeypatch):
+        captured = self._capture_curl(monkeypatch)
+        entry = {
+            "title": "T", "message": "M", "priority": 1,
+            "url": "http://100.70.51.21:5555/", "url_title": "Open status page",
+        }
+        nd.forward_to_pushover(entry, "apptok", "userkey")
+        cmd = captured["cmd"]
+        assert "url=http://100.70.51.21:5555/" in cmd
+        assert "url_title=Open status page" in cmd
+        # the API endpoint stays last
+        assert cmd[-1] == "https://api.pushover.net/1/messages.json"
+
+    def test_url_omitted_when_absent(self, monkeypatch):
+        captured = self._capture_curl(monkeypatch)
+        entry = {"title": "T", "message": "M", "priority": 0}
+        nd.forward_to_pushover(entry, "apptok", "userkey")
+        cmd = captured["cmd"]
+        assert not any(str(x).startswith("url=") for x in cmd)
+        assert not any(str(x).startswith("url_title=") for x in cmd)
+
+    def test_url_title_omitted_without_url(self, monkeypatch):
+        captured = self._capture_curl(monkeypatch)
+        entry = {"title": "T", "message": "M", "priority": 0, "url_title": "Orphan"}
+        nd.forward_to_pushover(entry, "apptok", "userkey")
+        cmd = captured["cmd"]
+        assert not any(str(x).startswith("url_title=") for x in cmd)
