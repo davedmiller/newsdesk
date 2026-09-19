@@ -1,4 +1,4 @@
-*Last updated: 2026-09-19 07:28 EDT*
+*Last updated: 2026-09-19 07:40 EDT*
 
 # Newsdesk — Hub-on-the-Mini Relay
 
@@ -21,7 +21,7 @@ Three things need to change together:
 | ID | Machine | Role | Runs |
 |----|---------|------|------|
 | M1 | micro-mac-mini (`davidmiller`) | **Hub.** Sole consumer of every queue; sole Pushover forwarder; owns the unified history | `newsdesk relay` under launchd (KeepAlive) |
-| M2 | micro-m4 (`dave`) | **Pushing sender.** Writes locally, ships its queue to the hub | `newsdesk send` (unchanged callers) → spawns `newsdesk push`; launchd backstop `push` every 60 s |
+| M2 | micro-m4 (`dave`) | **Pushing sender.** Writes locally, ships its queue to the hub | `newsdesk send` (unchanged callers) → spawns a detached `newsdesk push`. No launchd on this machine |
 | M3 | Lewiston agent boxes ×3 (`tag:agent`) | **Pulled sender.** Writes locally, nothing else | `newsdesk send` only (hvac plan W7). No daemon, no key, no outbound path |
 | M4 | Any machine Dave is sitting at | **Viewer.** Reads the hub's history | `newsdesk watch` on the mini, reached via `ssh -t mini` inside tmux |
 
@@ -89,15 +89,18 @@ Ships the local queue to the hub. Mirror image of `consume_remote_queue`.
 
 | Aspect | Spec |
 |--------|------|
-| Invocation | `newsdesk push` — reads `config["hub"]`; exits 0 silently if no hub configured |
-| Steps | 1. Local rename-read-delete *without* the delete: `queue.jsonl` → `queue.jsonl.processing`, read entries (plus any fresh `.processing` left by a failed prior push). 2. If nothing to ship, exit 0. 3. `ssh -o BatchMode=yes -o ConnectTimeout=2 <hub> 'f=...; t="$f.incoming.$$"; cat > "$t" && cat "$t" >> "$f" && rm "$t"'` with the entries on stdin. 4. On exit 0: delete `.processing`. On any failure: leave `.processing` in place — the next push recovers it (it is fresh, < `STALE_PROCESSING_AGE`). |
+| Invocation | `newsdesk push` — reads `config["hub"]`; exits 0 silently if no hub configured. Spawned by every `send` (C3); never scheduled |
+| Lock | Exclusive `fcntl.flock` on `queue.jsonl.push.lock`, **blocking**, with a `PUSH_LOCK_TIMEOUT_S` alarm. Serializes concurrent pushes: a burst of sends spawns a burst of pushes, the first holds the lock and drains everything, the rest wake to an empty queue and exit. One ssh connection per burst, and no two pushes ever touch `.processing` at once |
+| Steps, under the lock, looped until the queue is empty | 1. Recover any `.processing` left by a crashed prior push (fresh, < `STALE_PROCESSING_AGE`). 2. Rename `queue.jsonl` → `queue.jsonl.processing`, read entries. 3. If nothing to ship, release and exit 0. 4. `ssh -o BatchMode=yes -o ConnectTimeout=2 <hub> 'f=...; t="$f.incoming.$$"; cat > "$t" && cat "$t" >> "$f" && rm "$t"'` with the entries on stdin. 5. On exit 0: delete `.processing`, go to 2 (a send may have landed while shipping). On any failure: leave `.processing` in place, release, exit — the next send's push recovers it |
 | Why stage-then-append | A dropped connection mid-stream must not leave a half line in the hub's queue. The remote `cat "$t" >> "$f"` is a local operation on the mini and completes or doesn't. `parse_jsonl` would skip a torn line silently — that is a lost notification, and staging makes it impossible. |
 | Concurrency with the relay | The relay renames the hub's queue; an append that races it either lands before the rename (consumed now) or opens a fresh file after (consumed next cycle). No loss either way. |
-| Concurrency with itself | Two pushes at once (spawned + launchd backstop): the second finds no queue or a fresh `.processing` owned by the first. `.processing` recovery must only pick up files older than a few seconds — add `PROCESSING_MIN_AGE_S` = 5 so a push in flight is not double-shipped. |
+| Backlog after an outage | If the mini was unreachable, entries wait in `.processing`/queue until the *next send* spawns a push. There is no timer to ship them sooner. Accepted (D3): micro-m4 sends constantly when in use, sends nothing that clears the phone threshold today, and nothing is lost — only delayed until the next send. |
 
 ### 3.3 C3 — `send` spawns a push
 
 After the local append, if `config["hub"]` is set: `subprocess.Popen([newsdesk, "push"], start_new_session=True, stdin/stdout/stderr=DEVNULL)`. Fire-and-forget; `send` still returns in milliseconds; a Claude Code hook that spawned it is not blocked and cannot kill it. On the boxes there is no `hub`, so nothing changes there.
+
+This is the **only** push trigger — every send on micro-m4 ships to the mini, and there is no launchd job on micro-m4 (D3). Why detached rather than a synchronous `ssh` inside `send`: a cold ssh over Tailscale is 0.5–2 s and an unreachable mini costs the full `SSH_CONNECT_TIMEOUT` — inside every Claude Code hook, on every turn, for as long as the mini is down. The detached child is what lets "each send writes to the mini" and N1 both hold.
 
 ### 3.4 C4 — `watch` becomes a viewer
 
@@ -133,10 +136,9 @@ After the local append, if `config["hub"]` is set: `subprocess.Popen([newsdesk, 
 | ID | File | Machine | Key settings |
 |----|------|---------|--------------|
 | L1 | `launchd/com.dave.newsdesk-relay.plist` | mini | `KeepAlive true`, `RunAtLoad true`, `ThrottleInterval 10`, `StandardOutPath`/`StandardErrorPath` → `~/.local/share/newsdesk/relay.log`, `ProgramArguments` = absolute path to `~/bin/newsdesk relay` |
-| L2 | `launchd/com.dave.newsdesk-push.plist` | micro-m4 | `StartInterval 60`, `ProgramArguments` = `~/bin/newsdesk push`. Backstop only — the spawn in C3 is the primary trigger |
-| L3 | `scripts/install-launchd.sh relay\|push` | both | Substitutes `__HOME__`, copies to `~/Library/LaunchAgents/`, `launchctl bootstrap gui/$(id -u)`. Idempotent (bootout first if loaded) |
+| L2 | `scripts/install-launchd.sh` | mini | Substitutes `__HOME__`, copies to `~/Library/LaunchAgents/`, `launchctl bootstrap gui/$(id -u)`. Idempotent (bootout first if loaded) |
 
-Plists are user agents (`gui/` domain), not system daemons — they need the login Keychain, which is what the backup monitor already relies on.
+One plist, one machine. The relay is a user agent (`gui/` domain), not a system daemon — it needs the login Keychain, which is what the backup monitor already relies on. micro-m4 gets nothing: its push is spawned per send (C3).
 
 ### 3.8 C8 — New constants
 
@@ -145,7 +147,7 @@ Plists are user agents (`gui/` domain), not system daemons — they need the log
 | `REMOTE_POLL_INTERVAL_S` | 30 | Relay pull cadence for `remote_machines` |
 | `HEARTBEAT_INTERVAL_S` | 60 | State file + Healthchecks ping cadence |
 | `RELAY_STALE_AFTER_S` | 180 | Viewer shows STALE past this |
-| `PROCESSING_MIN_AGE_S` | 5 | Push ignores a `.processing` younger than this (another push owns it) |
+| `PUSH_LOCK_TIMEOUT_S` | 30 | A push waiting on the lock gives up after this (a wedged ssh must not pile up children) |
 
 ## 4. Failure modes
 
@@ -154,7 +156,7 @@ Plists are user agents (`gui/` domain), not system daemons — they need the log
 | F1 | Relay process dies | Nothing forwarded | launchd restarts within 10 s; Healthchecks fires if it keeps dying | Automatic |
 | F2 | Mini off / Tailscale down | Nothing forwarded, nothing pulled | **Healthchecks dead-man → Pushover directly** (HC has a native Pushover integration; it must not route through newsdesk) | Manual — but *known* |
 | F3 | Box unreachable | Its entries wait in its queue | hvac staleness alert (W6) covers the box being dark; the queue drains when it returns, timestamped | Automatic |
-| F4 | micro-m4 can't reach mini | Entries wait in micro-m4's `.processing` / queue | Next push (spawned or backstop) ships the backlog | Automatic |
+| F4 | micro-m4 can't reach mini | Entries wait in micro-m4's `.processing` / queue | The next send's push ships the backlog. If micro-m4 goes idle first, the backlog waits for the next send — delayed, never lost (D3) | Automatic on next send |
 | F5 | Keychain locked / tokens missing on mini | History accrues, no Pushover | Relay logs once; viewer header shows `no keychain tokens`; nothing else — same silent hole as #24 | ⚠️ Open: should the relay ping HC with `/fail` in this state so it pages? Recommend yes (D5) |
 | F6 | Old `watch` on micro-m4 still polling the mini | Races the relay for the mini's queue; items it wins never hit the hub's history or Pushover | Nothing | **Deploy order S4 before S5** |
 | F7 | Pushover rejects a message | Entry is in history, not on phone | Not detected (fire-and-forget, #24) | Out of scope here; next-steps R4 |
@@ -169,9 +171,9 @@ Order matters because of F6. Each step is complete before the next starts.
 | S2 | mini | `git pull` in `~/Developer/newsdesk` (also retires the stale clone that lacks `--url`, #42) | `newsdesk send --help` shows `--url` |
 | S3 | mini | Config: `remote_machines` = the three boxes; `~/.ssh/config` aliases with `User` matching whoever the box's units send as; one manual `ssh <box> true` per box to populate `known_hosts` (BatchMode refuses unknown hosts *silently*). Keychain: `security add-generic-password -a dave -s newsdesk-hc-url -w <url>`. Create the Healthchecks check `newsdesk-relay` (period 5 min, grace 5 min, Pushover integration) | `newsdesk relay --once` prints `remotes=3/3` |
 | S4 | micro-m4 | Config: delete `mini` from `remote_machines`; add `hub`. **Quit the running `watch`.** From here until S5 completes, the mini's queue is unconsumed — minutes, and it is durable | `cat ~/.config/newsdesk/config.json` |
-| S5 | mini | `scripts/install-launchd.sh relay` | `launchctl list \| grep newsdesk`; `relay.log` shows cycles; HC dashboard shows the check green |
+| S5 | mini | `scripts/install-launchd.sh` | `launchctl list \| grep newsdesk`; `relay.log` shows cycles; HC dashboard shows the check green |
 | S6 | mini | Real end-to-end: `newsdesk send "Relay test" "priority 2 via hub" --priority 2` on the mini | Phone buzzes (emergency; acknowledge it). `history.jsonl` has the entry |
-| S7 | micro-m4 | `scripts/install-launchd.sh push`; then `newsdesk send "Push test" "from micro-m4" --priority 0` | Entry appears in the mini's `history.jsonl` within ~5 s with `"machine": "micro-m4"` |
+| S7 | micro-m4 | `newsdesk send "Push test" "from micro-m4" --priority 0` | Entry appears in the mini's `history.jsonl` within ~5 s with `"machine": "micro-m4"`. Then five sends in a loop → `relay.log` shows one batch, not five |
 | S8 | a box | `newsdesk send "Pull test" "from lake-agent-1" --priority 0` | Entry appears in the mini's history within 30 s |
 | S9 | mini | `sudo reboot` (⚠️ disrupts OpenBrain / hvac services for ~2 min — Dave's call on timing) | Relay is running after login without a hand; HC never went red |
 | S10 | micro-m4 | Open the viewer: `ssh -t mini 'tmux new -As newsdesk newsdesk watch'` | Header shows `relay: Ns ago`; bell rings in iTerm on a priority-1 send |
@@ -196,7 +198,7 @@ Order matters because of F6. Each step is complete before the next starts.
 | T2 | `test_relay_remote_cadence` | Remotes pulled on the first cycle and again only after `REMOTE_POLL_INTERVAL_S` (mock clock) |
 | T3 | `test_push_retains_processing_on_failure` | ssh returncode ≠ 0 → `.processing` still exists with all entries; returncode 0 → deleted |
 | T4 | `test_push_command_stages_before_append` | The remote command string writes to `$f.incoming.$$` before `>> "$f"` |
-| T5 | `test_push_skips_fresh_processing` | `.processing` younger than `PROCESSING_MIN_AGE_S` is left alone |
+| T5 | `test_push_drains_under_lock` | An entry appended while a push is mid-ship is shipped by the same push's next loop iteration; a second push started concurrently exits having shipped nothing |
 | T6 | `test_send_spawns_push_only_with_hub` | `Popen` called iff `config["hub"]`; called with `start_new_session=True` |
 | T7 | `test_watch_new_since` | Pure helper: entries with `ts` > last-seen, in order |
 | T8 | `test_relay_state_label` | `3s ago` / `STALE 6m` / `no state file` from a state dict and a now |
@@ -209,7 +211,7 @@ Order matters because of F6. Each step is complete before the next starts.
 |----|----------|----------------|--------|
 | D1 | Does `watch` keep a standalone consume mode for a machine with no relay? | **No.** One consumer, one code path. A single-machine user runs `relay` + `watch`. The compat cost is Dave's micro-m4 habit, which is the thing being changed. | Open |
 | D2 | Viewer on micro-m4: `ssh -t mini` or a `watch --hub mini` that reads remote history? | **`ssh -t mini` in tmux.** Zero viewer code; `--hub` is deferred (X1). | Open |
-| D3 | Push trigger: spawn-on-send, launchd backstop, or both? | **Both.** Spawn gives ~3–5 s at-desk latency; the 60 s backstop covers "mini was unreachable, then micro-m4 went quiet". One plist. | Open |
+| D3 | Push trigger: spawn-on-send, launchd backstop, or both? | **Spawn only.** Every send ships; no launchd on micro-m4. The backstop covered only "mini unreachable at send time, then micro-m4 idle" — and even then the entry ships on the next send. Not worth a plist. | **Decided 2026-09-19 (Dave)** |
 | D4 | Relay remote cadence | 30 s. Box messages are boot/update/throttle reports; nothing there needs 2 s. | Open |
 | D5 | Relay pings Healthchecks `/fail` when Keychain tokens are missing? | **Yes.** It turns F5 from silent into paged, at the cost of three lines. | Open |
 | D6 | Keep `--no-pushover` on `relay`? | Yes — it is the only session-level escape and costs nothing. | Open |
