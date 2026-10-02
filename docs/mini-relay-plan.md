@@ -1,4 +1,4 @@
-*Last updated: 2026-10-02 06:45 MDT*
+*Last updated: 2026-10-02 09:25 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
@@ -170,7 +170,7 @@ Held in memory, served at W3, published on the SSE `state` event, and also writt
 | K2 | `remote_machines` | `[]` (**remove** the `mini` entry) | `[]` in Phase 1; one per box in Phase 2 | `[]` | `host` is an `~/.ssh/config` alias on the mini |
 | K3 | `pushover_min_priority` | ignored | `2` (current) | ignored | Only the relay reads it now |
 | K4 | `web_bind`, `web_port` | ignored | `"127.0.0.1"`, `5556` | ignored | Defaults; override `web_bind` to the tailnet IP if D9's fallback is needed |
-| K5 | Healthchecks URL | — | Keychain `newsdesk-hc-url`, account `dave` | — | Same pattern as `backup-monitor-hc-url`. Absent → relay logs once, no ping |
+| K5 | Healthchecks URL | — | Keychain `newsdesk-hc-url`, account `dave` | — | Same pattern as `backup-monitor-hc-url`. Absent → relay logs once, no ping. ✅ **The healthchecks.io account exists (2026-10-02): davedmiller79@gmail.com, default project, with email and Pushover (down = Emergency, up = Normal) already subscribed** — set up for hvac_monitor's freeze watch. S3 is just "add a check `newsdesk-relay` there"; both integrations attach to it |
 
 ### 3.8 C8 — launchd and exposure
 
