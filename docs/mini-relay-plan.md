@@ -1,4 +1,4 @@
-*Last updated: 2026-10-02 09:56 MDT*
+*Last updated: 2026-10-02 10:47 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
@@ -28,7 +28,7 @@ Four things change together:
 | M1 | micro-mac-mini (`davidmiller`) | **Hub.** Sole consumer of every queue; sole Pushover forwarder; owns the unified history; serves the viewer | `newsdesk relay` under launchd (KeepAlive), which also hosts the web server |
 | M2 | micro-m4 (`dave`) | **Pushing sender.** Writes locally, ships its queue to the hub | `newsdesk send` (unchanged callers) → spawns a detached `newsdesk push`. No launchd on this machine |
 | M3 | Lewiston agent boxes ×3 (`tag:agent`) — **Phase 2** | **Pulled sender.** Writes locally, nothing else | `newsdesk send` only (hvac plan W7). No daemon, no key, no outbound path |
-| M4 | Any browser on the tailnet — laptop, phone | **Viewer.** Reads the hub's history | `https://micro-mac-mini.<tailnet>.ts.net` (`http://100.70.51.21:5556` answers only if `web_bind` is set to the tailnet IP, F10) |
+| M4 | Any browser on the tailnet — laptop, phone | **Viewer.** Reads the hub's history | `https://micro-mac-mini.tailbf38e2.ts.net` (`http://100.70.51.21:5556` answers only if `web_bind` is set to the tailnet IP, F10) |
 
 ### 2.2 Data flow
 
@@ -190,7 +190,7 @@ Held in memory, served inside W2, and written to `~/.local/share/newsdesk/relay.
 |----|----------------|---------|--------------|
 | L1 | `launchd/com.dave.newsdesk-relay.plist` | mini | A template with the literal token `__HOME__`. `KeepAlive true`, `RunAtLoad true`, `ThrottleInterval 10`, `StandardOutPath`/`StandardErrorPath` → `~/.local/share/newsdesk/relay.log`, `ProgramArguments` = absolute path to `~/bin/newsdesk relay`. `EnvironmentVariables`: `PATH` (so the wrapper's `exec python3` finds the same Python as an interactive shell) and `PYTHONUNBUFFERED=1` |
 | L2 | `scripts/install-launchd.sh` | mini | Replaces `__HOME__` with `$HOME`, writes to `~/Library/LaunchAgents/`, `launchctl bootstrap gui/$(id -u)`. Idempotent (bootout first if loaded) |
-| L3 | `tailscale serve --bg --https=443 http://127.0.0.1:5556` | mini, once | Tailnet-only HTTPS at `https://micro-mac-mini.<tailnet>.ts.net`. Needs MagicDNS + HTTPS certs enabled in the admin console (SP1) |
+| L3 | `tailscale serve --bg --https=443 http://127.0.0.1:5556` | mini, once | Tailnet-only HTTPS at `https://micro-mac-mini.tailbf38e2.ts.net`. Needs MagicDNS + HTTPS certs enabled in the admin console (SP1) |
 
 The relay is a user agent (`gui/` domain), not a system daemon — it needs the login Keychain, which the backup monitor already relies on (SP2 confirms it for this job).
 
