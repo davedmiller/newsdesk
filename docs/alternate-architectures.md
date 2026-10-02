@@ -3,7 +3,7 @@
 
 # Alternate Architectures Considered
 
-*Last updated: 2026-04-29 —:—*
+*Last updated: 2026-10-02 16:06 MDT*
 
 ## 1. Context
 
@@ -20,6 +20,8 @@ In April 2026 we explored several alternatives to the current newsdesk architect
 ## 2. Alternatives Considered
 
 ### 2.1 Build a web UI on top of newsdesk
+
+> **Built, 2026-10-02.** A1 (headless poller), A2 (stdlib `http.server` + static page) and A3 (tailnet-only) shipped together as `newsdesk relay` — see `docs/mini-relay-plan.md`. The page polls every 3 s rather than streaming, which was simpler and sufficient. The ntfy deferral (§2.4) held: this closed the unified-view gap that was ntfy's main draw.
 
 | ID | Item | Notes |
 |----|------|-------|

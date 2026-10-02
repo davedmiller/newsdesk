@@ -1,19 +1,27 @@
 # Newsdesk
 
-Unified notification hub CLI for macOS. Centralizes notifications from multiple machines into a single terminal UI with optional Pushover relay.
+Unified notification hub for macOS. Every machine queues notifications locally with one CLI; an always-on hub gathers them, keeps one history, forwards the important ones to Pushover, and serves a web page you can read from any browser on the tailnet.
 
-## Features
+## How it fits together
 
-- **Send** notifications from any project or script via CLI
-- **Watch** a curses TUI that polls local and remote queues via SSH
-- **Relay** notifications to Pushover for mobile alerts
-- **Priority levels** from silent (-2) to emergency (2) with configurable display, bell, and relay behavior
-- **Priority-threshold forwarding** — only priority ≥ `pushover_min_priority` reaches Pushover
-- **Auto-detection** of project name (from git repo) and machine name (from hostname)
-- **File-based queues** using JSONL — no server, no database
-- **macOS Keychain** for Pushover credentials
+```
+sender (any machine)            hub (always-on Mac)                 you
+────────────────────            ───────────────────                 ───
+newsdesk send ─▶ queue.jsonl    newsdesk relay (launchd)
+                  │               ├─ claims the hub's own queue
+                  └─ push ──────▶ ├─ claims batches pushed to it
+                     (ssh)        ├─ pulls machines it can reach by ssh
+                                  ├─▶ history.jsonl ──▶ web page ──▶ 🌐 browser
+                                  ├─▶ Pushover (priority ≥ threshold) ──▶ 📱
+                                  └─▶ Healthchecks.io ping ──(dead-man)──▶ 📱
+```
 
-## Install
+- **Send** never touches the network. It appends one JSON line to the local queue and returns.
+- **Push** runs as a detached child of `send` on machines that have a `hub` configured. It ships the queue to the hub over ssh and deletes nothing the hub has not taken.
+- **Relay** is the only consumer. It writes history before deleting anything, drops entries it has already seen (every entry carries an id), retries failed Pushover forwards for up to an hour, and pings Healthchecks.io every minute so a dead relay pages you through a path that does not depend on the relay.
+- **The page** polls the relay every 3 seconds. Newest first, filter box, bell, silent entries hidden by default.
+
+## Install on a sender
 
 ```bash
 git clone https://github.com/davedmiller/newsdesk.git ~/Developer/newsdesk
@@ -22,109 +30,107 @@ cd ~/Developer/newsdesk
 source ~/.zshrc
 ```
 
-Then optionally store Pushover credentials for mobile relay:
+Then point it at the hub in `~/.config/newsdesk/config.json`:
 
-```bash
-security add-generic-password -a pushover -s newsdesk-app-token -w <APP_TOKEN>
-security add-generic-password -a pushover -s newsdesk-user-key -w <USER_KEY>
+```json
+{
+  "queue_file": "~/.local/share/newsdesk/queue.jsonl",
+  "history_file": "~/.local/share/newsdesk/history.jsonl",
+  "remote_machines": [],
+  "hub": {"host": "mini", "queue_file": "~/.local/share/newsdesk/queue.jsonl"}
+}
 ```
 
-## Usage
+`host` is an alias in `~/.ssh/config` that works with `BatchMode=yes`. With a `hub` set, the local queue is never rotated: a backlog waits, unbounded, until the hub is reachable again.
 
-### Send a notification
+## Install on the hub
+
+Same clone and `setup.sh`, then:
+
+1. **Config** (`~/.config/newsdesk/config.json`): no `hub`; set `pushover_min_priority` (2 = emergencies only) and `web_bind` to the machine's Tailscale address so the page is reachable from the tailnet and nothing else. `web_port` defaults to 5556.
+2. **Keychain**, in a Terminal on the hub itself (the Keychain is not usable over ssh):
+   ```bash
+   security add-generic-password -a pushover -s newsdesk-app-token -w <APP_TOKEN>
+   security add-generic-password -a pushover -s newsdesk-user-key -w <USER_KEY>
+   security add-generic-password -a dave -s newsdesk-hc-url -w <HEALTHCHECKS_PING_URL>
+   ```
+   The Healthchecks URL is optional; without it the page shows `healthchecks off`.
+3. **Check**: `newsdesk init` shows both Pushover ticks; `newsdesk relay --once --no-pushover` runs one cycle and prints its summary.
+4. **Run it**: `scripts/install-launchd.sh` installs `com.dave.newsdesk-relay` as a LaunchAgent (KeepAlive, log at `~/.local/share/newsdesk/relay.log`). Re-run it after pulling new code, or `launchctl kickstart -k gui/$(id -u)/com.dave.newsdesk-relay`.
+
+The page is then at `http://<hub tailscale ip>:5556`.
+
+## Usage
 
 ```bash
 newsdesk send "Title" "Message"
 newsdesk send "Deploy Done" "All tests passed" --priority 1 --project myapp
-# --url adds a tappable link in the Pushover notification; --url-title labels it
+# --url adds a tappable link in the Pushover notification and on the page
 newsdesk send "Backup degraded" "Ann TM stale, NAS 91%" --priority 1 \
   --url "http://100.70.51.21:5555/" --url-title "Open status page"
+
+newsdesk relay                 # the hub loop; normally run by launchd
+newsdesk relay --once          # one cycle, print the summary, exit
+newsdesk relay --no-pushover   # relay without forwarding to the phone
+newsdesk push                  # ship the local queue to the hub (send does this for you)
+newsdesk init                  # create the config, check the Keychain
 ```
-
-### Watch for notifications
-
-```bash
-newsdesk watch                # forwards priority >= pushover_min_priority to Pushover
-newsdesk watch --no-pushover  # suppress all Pushover forwarding for this session
-```
-
-### Watcher keyboard shortcuts
-
-| Key | Action |
-|-----|--------|
-| L | Latest view — live tail of incoming notifications |
-| H | History view — browse processed notifications |
-| C | Clear the latest view |
-| S | Save history snapshot to a log file |
-| V | Toggle visibility of silent (priority -2) messages |
-| ? | Help (two pages: shortcuts + priority reference) |
-| Q | Quit |
 
 ### Priority levels
 
-| Priority | Icon | Bell | Display | Pushover |
-|----------|------|------|---------|----------|
-| -2 silent | — | no | hidden (V to show) | never |
-| -1 quiet | — | no | yes | if ≥ threshold |
-| 0 normal | ✅ | no | yes | if ≥ threshold |
-| 1 high | 🔔 | yes | yes | if ≥ threshold |
-| 2 emergency | 🔔 | yes | yes | if ≥ threshold |
+| Priority | Page | Pushover |
+|----------|------|----------|
+| -2 silent | hidden unless "show silent" | never |
+| -1 quiet | no icon | if ≥ threshold |
+| 0 normal | ✅ | if ≥ threshold |
+| 1 high | 🔔 | if ≥ threshold |
+| 2 emergency | 🔔 | if ≥ threshold; re-alerts until acknowledged |
 
-Pushover forwarding is governed by a single setting, **`pushover_min_priority`**
-(default `-1` = forward everything except silent). Raise it to forward only more
-important messages — e.g. `1` keeps priority-0 chatter on the console/feed but off
-your phone. Priority `-2` is never forwarded. `--no-pushover` suppresses forwarding
-for one `watch` session. Priority `2` is a Pushover **emergency** — it re-alerts until
-you acknowledge it in the app (`retry`/`expire` are sent automatically).
+`pushover_min_priority` on the hub is the one forwarding switch (default `-1` = everything but silent). Priority `-2` is never forwarded.
 
-### Initialize config
+## Pulled senders
 
-```bash
-newsdesk init
-```
-
-Creates `~/.local/share/newsdesk/config.json` and checks Keychain status.
-
-## Remote polling
-
-The watcher can poll queues on other machines via SSH. Add remote machines to your config:
+A machine the hub can reach by ssh but that cannot reach the hub (for example a Raspberry Pi with no key to it) is listed in the hub's `remote_machines` instead of pushing:
 
 ```json
 {
   "remote_machines": [
-    {"host": "mini", "queue_file": "~/.local/share/newsdesk/queue.jsonl"}
+    {"name": "lake", "host": "lake-agent", "queue_file": "~/.local/share/newsdesk/queue.jsonl"}
   ]
 }
 ```
 
-The host value should match an entry in your `~/.ssh/config`. Queue paths use `~` which expands to the remote user's home directory.
+The relay pulls each one every 30 seconds, writes what it got to history, and only then tells the machine to delete it. `host` must work with `ssh -o BatchMode=yes` from the hub, so populate `known_hosts` once by hand.
 
 ## Claude Code integration
 
-Newsdesk integrates with Claude Code via a global Notification hook. When Claude needs permission or goes idle, the hook sends a notification through newsdesk:
+A global Stop hook sends a priority-0 "Turn complete" through newsdesk at the end of every turn, and a Notification hook sends permission prompts at priority 1:
 
 ```bash
 # ~/.claude/hooks/newsdesk-notify.sh
 "$HOME/bin/newsdesk" send "Claude: Permission" "$MESSAGE" --priority 1
 ```
 
-See `~/.claude/CLAUDE.md` for cross-project setup instructions.
+With the hub's threshold at 2, these stay on the page and off the phone.
 
 ## Queue safety
 
-- Rename-read-delete pattern prevents race conditions between senders and watcher
-- Stale `.processing` files (> 1 day) are cleaned up automatically
-- Fresh `.processing` files are recovered on restart (crash recovery)
+- A sender's queue is moved aside (`queue.jsonl.processing`) before it is read, so a `send` racing a push or the relay never loses a line.
+- Push ships `.processing` before anything newer and keeps it until the hub has the batch, however old it is.
+- On the hub, a pushed batch lands as its own `queue.jsonl.in.<id>` file by an atomic rename, never appended to the live queue.
+- The relay writes history before deleting any source, and drops entries whose id it has already accepted, so a replay after a crash or a lost acknowledgement adds nothing.
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
 ```
+
+The web tests bind a local port, so they fail under a sandbox that blocks local binding.
 
 ## Requirements
 
-- macOS (uses Keychain, curses)
-- Python 3 (stdlib only)
-- SSH access for remote polling
-- Pushover account for mobile relay (optional)
+- macOS (uses Keychain and launchd)
+- Python 3.9 or newer, stdlib only
+- ssh between senders and the hub
+- Pushover account; Healthchecks.io account for the dead-man ping (optional)

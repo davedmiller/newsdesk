@@ -1,8 +1,8 @@
-*Last updated: 2026-10-02 12:54 MDT*
+*Last updated: 2026-10-02 16:06 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
-**Status: S1 built and pushed on `relay-hub` (2026-10-02); nothing deployed.** Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). All decisions in §9 are made except D12, which waits for the cutover.
+**Status: DONE 2026-10-02 — Phase 1 deployed and verified (S1–S13); merged to main.** Phase 2 (boxes) remains deferred and config-only (Appendix A). Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). All decisions in §9 are made except D12, which waits for the cutover.
 
 §3, §5 and §8 are the build spec. Rationale that is not needed to build sits in the appendices. The plan was reviewed and assessed on 2026-10-02; Appendix C says what each changed.
 
@@ -296,6 +296,24 @@ Order matters because of F6. **`watch` keeps working until S12**, so until then 
 | S11 | — | Kill the relay (`launchctl bootout`, confirm no process) | Phone gets the Healthchecks alert within 12 min. Reinstall |
 | S12 | micro-m4, then mini | Remove the TUI (C10) on `relay-hub`; push. On the mini: `git pull`, `launchctl kickstart -k gui/$(id -u)/com.dave.newsdesk-relay` | Suite green at 45 surviving tests plus the new ones; `newsdesk watch` no longer exists; the page still updates after the kickstart |
 | S13 | — | Merge `relay-hub` to main. On the mini: `git checkout main && git pull`, kickstart again. Docs (O4); register 5556 (O5) | `git status` on the mini shows `main`, up to date; page loads |
+
+### 5.3 Deployment record — 2026-10-02
+
+| Step | Result |
+|------|--------|
+| S2 | Mini on `relay-hub`; its stale `.claude/settings.json` edit discarded |
+| S3 | Healthchecks check `newsdesk-relay` created (5 min / 5 min, email + Pushover). Keychain loaded by a one-off script run in the mini's Terminal from values staged over ssh; `init` two ticks; `--once` ran |
+| S4 | `watch` quit 15:26; `hub` set on micro-m4; the test entry landed as a spool file on the mini before the relay existed |
+| S5 | Relay installed 15:27; consumed the S4 entry; listening on `100.70.51.21:5556` only; page loads on micro-m4 and the phone |
+| S7 | Priority-2 from the mini with no session open: forwarded, phone alerted (the first test was silent because of the phone's state; the second sounded), row appeared without reload |
+| S8 | Single send and bursts of 5 and 8: every entry once, within ~2 s. **Bug found and fixed:** spool files were claimed in random-name order, so a burst arrived as 3, 4, 1, 2, 5; now oldest first (`d25d09d`) |
+| S9 | Reboot 15:52: relay back by itself at 50 s uptime, tokens and URL read, tailnet bind first try |
+| S10 | Phone locked 10 min, entry sent at 3 min: row appeared on unlock |
+| S11 | Relay stopped 15:54:04; Healthchecks DOWN at 16:01:29 by email and Pushover; relay reinstalled 16:02:44 and picked up 3 waiting entries |
+| S12 | TUI removed (`8c15e53`): 33 tests went with it (27 TUI + 6 for `consume_local_queue`, which also went); 104 remain |
+| D12 | Threshold stays at **2** (Dave, at the cutover) |
+
+Known behaviour accepted at S12: the relay has no stale rule. A `.processing` or spool file of any age is accepted on restart and, if it clears the threshold, forwarded; the retry list does not survive a restart.
 
 ## 6. Deployment — Phase 2
 

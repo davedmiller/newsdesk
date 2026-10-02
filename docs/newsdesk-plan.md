@@ -1,6 +1,8 @@
-*Last updated: 2026-03-06 13:30 MST*
+*Last updated: 2026-10-02 16:06 MDT*
 
 # newsdesk — Unified Notification Hub
+
+> **Superseded in part (2026-10-02).** The `watch` TUI described here was removed; the always-on relay on micro-mac-mini and the web page replaced it. See `docs/mini-relay-plan.md`. The `send` design, priorities and Keychain conventions still apply.
 
 ## Context
 
