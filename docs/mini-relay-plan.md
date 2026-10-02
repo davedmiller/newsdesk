@@ -1,4 +1,4 @@
-*Last updated: 2026-10-02 10:48 MDT*
+*Last updated: 2026-10-02 12:22 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
@@ -69,7 +69,7 @@ Direction follows existing trust, per sender, rather than being uniform.
 | N2 | No Pushover secret leaves the hub | Keychain read only in `relay`, only on the mini. `push` carries entries, never tokens. |
 | N3 | Nothing unshipped is ever deleted | Push keeps `.processing` and the queue on disk through any number of failures, with no age limit, and rotation is off on a machine that has a `hub` (D15). The relay deletes a box's batch only after writing it to history (C11). The cost is a queue that grows for as long as the hub is unreachable. |
 | N4 | Each entry reaches history once | One consumer (the relay). Transport is at-least-once in both directions — a batch whose acknowledgement is lost is delivered again — so every entry carries an `id` and the relay drops ids it has already accepted (D14). Entries with no `id` (a sender on older code) pass through undeduped. |
-| N5 | stdlib only | `subprocess` for ssh and curl; `http.server` + `threading` for the viewer. No framework, no build step. |
+| N5 | stdlib only, Python 3.9 | The mini runs `/usr/bin/python3` 3.9.6 (SP2), so nothing newer than 3.9 syntax or library. `subprocess` for ssh and curl; `http.server` + `threading` for the viewer. No framework, no build step. |
 | N6 | The mini's listening surface stays deliberate (#101 audit) | Web server binds loopback; `tailscale serve` exposes it tailnet-only over HTTPS (D9). Fallback binds the tailnet IP, never `0.0.0.0`. |
 
 ### 2.5 Phasing
@@ -181,18 +181,18 @@ Held in memory, served inside W2, and written to `~/.local/share/newsdesk/relay.
 | K2 | `remote_machines` | `[]` (**remove** the `mini` entry) | `[]` in Phase 1; one per box in Phase 2 | `[]` | `host` is an `~/.ssh/config` alias on the mini |
 | K3 | `pushover_min_priority` | ignored | **`2`, set explicitly at S3** | ignored | The code default is −1, which on the hub would page the phone for every turn-complete ping. D12 revisits the value at the cutover |
 | K4 | `web_bind`, `web_port` | ignored | `"127.0.0.1"`, `5556` | ignored | Added to `DEFAULT_CONFIG` |
-| K5 | Healthchecks URL | — | Keychain `newsdesk-hc-url`, account `dave` | — | Same pattern as `backup-monitor-hc-url`. The healthchecks.io account exists (davedmiller79@gmail.com, default project, email and Pushover subscribed: down = Emergency, up = Normal); S3 adds a check `newsdesk-relay` to it |
+| K5 | Healthchecks URL | — | Keychain `newsdesk-hc-url`, account `dave` | — | The healthchecks.io account exists (davedmiller79@gmail.com, default project, email and Pushover subscribed: down = Emergency, up = Normal); S3 adds a check `newsdesk-relay` to it |
 | K6 | Pushover tokens | no longer read | Keychain `newsdesk-app-token`, `newsdesk-user-key`, account `pushover` | — | Today they are set up on micro-m4. The mini needs its own copies (S3) |
 
 ### 3.8 C8 — launchd and exposure
 
 | ID | File / command | Machine | Key settings |
 |----|----------------|---------|--------------|
-| L1 | `launchd/com.dave.newsdesk-relay.plist` | mini | A template with the literal token `__HOME__`. `KeepAlive true`, `RunAtLoad true`, `ThrottleInterval 10`, `StandardOutPath`/`StandardErrorPath` → `~/.local/share/newsdesk/relay.log`, `ProgramArguments` = absolute path to `~/bin/newsdesk relay`. `EnvironmentVariables`: `PATH` (so the wrapper's `exec python3` finds the same Python as an interactive shell) and `PYTHONUNBUFFERED=1` |
+| L1 | `launchd/com.dave.newsdesk-relay.plist` | mini | A template with the literal token `__HOME__`. `KeepAlive true`, `RunAtLoad true`, `ThrottleInterval 10`, `StandardOutPath`/`StandardErrorPath` → `~/.local/share/newsdesk/relay.log`, `ProgramArguments` = absolute path to `~/bin/newsdesk relay`. `EnvironmentVariables`: `PYTHONUNBUFFERED=1` (no `PATH` entry needed: the mini has one `python3`, in `/usr/bin`, SP2) |
 | L2 | `scripts/install-launchd.sh` | mini | Replaces `__HOME__` with `$HOME`, writes to `~/Library/LaunchAgents/`, `launchctl bootstrap gui/$(id -u)`. Idempotent (bootout first if loaded) |
 | L3 | `tailscale serve --bg --https=443 http://127.0.0.1:5556` | mini, once | Tailnet-only HTTPS at `https://micro-mac-mini.tailbf38e2.ts.net`. Needs MagicDNS + HTTPS certs enabled in the admin console (SP1) |
 
-The relay is a user agent (`gui/` domain), not a system daemon — it needs the login Keychain, which the backup monitor already relies on (SP2 confirms it for this job).
+The relay is a user agent (`gui/` domain), not a system daemon — it needs the login Keychain, which SP2 showed a LaunchAgent can read and an ssh session cannot.
 
 ### 3.9 C9 — Constants
 
@@ -254,7 +254,7 @@ Deleted at S12, with their tests: `cmd_watch`, `cmd_watch_curses`, the `watch` s
 
 ### 5.1 Spikes — before S1
 
-Assumptions that cannot be settled by reading. Each spike is small and throwaway. None has been run.
+Assumptions that cannot be settled by reading. Each spike is small and throwaway. SP1–SP4 were run on 2026-10-02; results are in §5.1.1.
 
 | ID | Assumption | Spike | If it fails |
 |----|------------|-------|-------------|
@@ -266,6 +266,18 @@ Assumptions that cannot be settled by reading. Each spike is small and throwaway
 
 (SP5 was withdrawn with the byte-count check it tested; Appendix C.)
 
+#### 5.1.1 Results — 2026-10-02
+
+| ID | Result | What it changes |
+|----|--------|-----------------|
+| SP1 | **Blocked on one click.** Nothing is on 443 and there is no serve config. `tailscale serve` run from a LaunchAgent answered "Serve is not enabled on your tailnet" with the enable link `https://login.tailscale.com/f/serve?node=na2hPq5tUr11CNTRL`; the node reports no certificate domains yet. Run over ssh, the same command fails outright ("The Tailscale GUI failed to start", CLIError 3) — the mini runs the standalone GUI build (1.102.3), whose CLI needs the GUI session. The machine name is confirmed: `micro-mac-mini.tailbf38e2.ts.net` | Dave enables Serve at that link. **S6 must run in a Terminal on the mini (screen share) or from a LaunchAgent, not over ssh.** The page-on-the-phone half is still to do once Serve is enabled |
+| SP2 | **Passed with a console user logged in; reboot half pending.** A LaunchAgent (`com.dave.newsdesk-spike`) added a Keychain item and read its secret back, both exit 0. The mini auto-logs in as `davidmiller` and FileVault is off, so a `gui/` agent should start after a reboot with no one present — the agent is still installed and logs on every load, so the next reboot answers it (`~/.local/share/newsdesk/spike/agent.log`). **Over ssh the Keychain is not usable:** adding an item fails ("User interaction is not allowed", exit 36) and reading a secret fails (exit 36); only an existence check works. launchd's `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin`, and the mini's only `python3` is `/usr/bin/python3` 3.9.6, the same one an interactive shell gets | **S3's Keychain lines and `newsdesk init` must run in a Terminal on the mini, not over ssh.** `relay --once` over ssh will always report `no keychain tokens`. **The code must run on Python 3.9.** L1 does not need a `PATH` entry. None of the four Keychain items exists on the mini yet, including `backup-monitor-hc-url` |
+| SP3 | **Passed.** With a throwaway spawn added to `cmd_send`, another session's real Stop hook ran `send` at 12:21:35; its detached child logged 20 s later, after the hook had exited, and `ssh -o BatchMode=yes mini true` from it exited 0 | C3 and D3 stand |
+| SP4 | **Passed, unexpectedly.** A `send` from the sandboxed Bash tool spawned a child whose ssh to the mini exited 0, twice, although a plain `ssh mini true` in the same sandbox fails with "Operation not permitted". Why the child is not confined is not understood | Nothing: the design does not depend on it either way. If a future sandbox does block it, the push fails and the next hook-spawned push ships the batch (F4) |
+| SP6 | Not run — needs the Healthchecks check, at S3 | — |
+
+Also found on the mini: its clone is on `main` at `735539c` with an uncommitted change to `.claude/settings.json`. S2's checkout has to deal with that file first; it is not this plan's change, so ask before touching it.
+
 ### 5.2 Steps
 
 Order matters because of F6. **`watch` keeps working until S12**, so until then the rollback from any failed step is: on micro-m4 remove `hub`, restore the `mini` entry in `remote_machines`, reopen `watch`; on the mini `launchctl bootout` the relay.
@@ -273,11 +285,11 @@ Order matters because of F6. **`watch` keeps working until S12**, so until then 
 | ID | Where | Step | Verifies |
 |----|-------|------|----------|
 | S1 | micro-m4 | Implement C1–C9 and C11 with tests (§8), **leaving `watch` and its tests in place**; commit on branch `relay-hub`; push | `.venv/bin/python -m pytest tests/ -q` green: today's 72 plus the new tests |
-| S2 | mini | `git fetch && git checkout relay-hub` in `~/Developer/newsdesk` (also retires the stale clone that lacks `--url`, #42) | `newsdesk send --help` shows `--url`; `newsdesk relay --help` exists |
-| S3 | mini | Keychain: both Pushover tokens (`security add-generic-password -a pushover -s newsdesk-app-token -w <token>`, same for `newsdesk-user-key`) and `security add-generic-password -a dave -s newsdesk-hc-url -w <url>`. Config: `pushover_min_priority` 2, explicitly. Create the Healthchecks check `newsdesk-relay` (period 5 min, grace 5 min, Pushover integration); run SP6 | `newsdesk init` shows both token ticks. `newsdesk relay --once --no-pushover` prints its summary line and writes `relay.state` — `--no-pushover` because micro-m4's `watch` is still the live consumer of this queue |
+| S2 | mini | First resolve the uncommitted change to `.claude/settings.json` in the clone (ask Dave; §5.1.1). Then `git fetch && git checkout relay-hub` in `~/Developer/newsdesk` (also retires the stale clone that lacks `--url`, #42) | `newsdesk send --help` shows `--url`; `newsdesk relay --help` exists |
+| S3 | mini, **in a Terminal on the mini (screen share) — the Keychain is not usable over ssh** | Keychain: both Pushover tokens (`security add-generic-password -a pushover -s newsdesk-app-token -w <token>`, same for `newsdesk-user-key`) and `security add-generic-password -a dave -s newsdesk-hc-url -w <url>`. Config: `pushover_min_priority` 2, explicitly. Create the Healthchecks check `newsdesk-relay` (period 5 min, grace 5 min, Pushover integration); run SP6 | `newsdesk init` shows both token ticks. `newsdesk relay --once --no-pushover` prints its summary line and writes `relay.state` — `--no-pushover` because micro-m4's `watch` is still the live consumer of this queue |
 | S4 | micro-m4 | Config: delete `mini` from `remote_machines`; add `hub`. **Quit the running `watch`.** Then `newsdesk send "Push check" "S4" --priority 0`. Until S5 completes the mini's queue is unconsumed — minutes, and it is durable | `ssh mini 'ls ~/.local/share/newsdesk/'` shows one `queue.jsonl.in.*` file holding that entry: the detached push, the ssh auth and the remote command all work before the relay is involved |
 | S5 | mini | `scripts/install-launchd.sh` | `launchctl list \| grep newsdesk`; `relay.log` shows the S4 entry consumed; `curl -s localhost:5556/api/feed` returns JSON whose state has `"healthchecks": true` and `pushover` `≥ 2`; the HC check goes green within two minutes |
-| S6 | mini | `tailscale serve --bg --https=443 http://127.0.0.1:5556` | `tailscale serve status`; the HTTPS URL loads the page on micro-m4 **and on the phone** |
+| S6 | mini, in a Terminal on the mini, after Serve is enabled for the tailnet (SP1) | `tailscale serve --bg --https=443 http://127.0.0.1:5556` | `tailscale serve status`; the HTTPS URL loads the page on micro-m4 **and on the phone** |
 | S7 | mini | End-to-end with no terminal left open: from an ssh session, `(sleep 60; newsdesk send "Relay test" "priority 2 via hub" --priority 2) &`, then close the session | Phone buzzes (emergency; acknowledge it). Row appears on the open page within about 5 s, without reload |
 | S8 | micro-m4 | `newsdesk send "Push test" "from micro-m4" --priority 0`; then five sends in a loop | Rows appear within ~10 s with machine `micro-m4`; all five burst rows appear, each once |
 | S9 | mini | `sudo reboot` (⚠️ disrupts OpenBrain / hvac services for ~2 min — Dave's call on timing) | Relay running with no action at the mini beyond what SP2 established is needed; HC never went red; `tailscale serve status` still lists the route; page loads |
