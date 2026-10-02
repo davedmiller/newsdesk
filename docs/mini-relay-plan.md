@@ -1,4 +1,4 @@
-*Last updated: 2026-10-02 09:25 MDT*
+*Last updated: 2026-10-02 08:50 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
@@ -91,7 +91,7 @@ Headless loop, intended for launchd. Replaces the consume/forward half of today'
 | Invocation | `newsdesk relay [--once] [--no-pushover] [--no-web]` |
 | Each cycle (every `POLL_INTERVAL_S` = 2 s) | `consume_local_queue` → `append_to_history` → fan out each entry to SSE subscribers (C4) → `forward_to_pushover` for entries passing `should_forward_pushover(entry, pushover_min_priority)` |
 | Every `REMOTE_POLL_INTERVAL_S` = 30 s | `consume_remote_queue` for each `remote_machines` entry. Phase 1 has none; the code path and its test ship anyway |
-| Every `HEARTBEAT_INTERVAL_S` = 60 s | Write `relay.state` (C6); publish a `state` SSE event; `curl -fsS -m 10 <healthchecks_url>` if configured (`/fail` suffix when Keychain tokens are missing, D5) |
+| Every `HEARTBEAT_INTERVAL_S` = 60 s | Write `relay.state` (C6); publish a `state` SSE event; ping Healthchecks if a URL is configured (`/fail` suffix when Keychain tokens are missing, D5). **The ping is issued by the relay loop itself, at the end of a cycle that completed** — never from the web thread, a timer thread or a second launchd job, so a wedged consume loop goes red instead of staying green on process liveness alone. **It is fire-and-forget:** `Popen(["curl", "-fsS", "-m", "10", url], start_new_session=True)` with output to `/dev/null`, not waited on, so an internet blip cannot stall consumption for the curl timeout |
 | Web server | Started in a daemon thread at startup unless `--no-web`. A crash in the thread is logged and the server restarted; it can never take the relay loop down |
 | Tokens | Read from Keychain once at startup. Missing tokens → log once, keep relaying (history and the viewer still work) |
 | Logging | One line per cycle that did anything: `2026-09-19T07:28:00 consumed=3 forwarded=1 remotes=0/0 sse=2` to stdout (launchd routes to `relay.log`). Silent cycles log nothing |
@@ -275,7 +275,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | T7 | `test_history_since_and_limit` | W2's filter: `since` excludes `ts <= since`; `limit` keeps the newest |
 | T8 | `test_web_routes` | Real `ThreadingHTTPServer` on an ephemeral port: `/` serves the file with `no-store`; `/api/state` is JSON; unknown path is 404 |
 | T9 | `test_sse_fanout_and_keepalive` | A subscriber receives `event: entry` for a consumed entry and a `: keepalive` after `SSE_KEEPALIVE_S` (mock clock); a subscriber whose write fails is dropped |
-| T10 | `test_heartbeat_pings_when_url_present` | curl invoked iff URL; `/fail` suffix when tokens missing |
+| T10 | `test_heartbeat_pings_when_url_present` | curl spawned iff URL; `/fail` suffix when tokens missing; spawned detached and not waited on (a mock curl that never returns does not delay the next cycle); no ping from a cycle that raised before completing |
 | T11 | Existing tests | The ~63 that survive C10 still green; the ~9 TUI-only tests go with the TUI (D8) |
 
 ## 9. Decisions
@@ -286,7 +286,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | D2 | ~~Viewer on micro-m4: `ssh -t mini` or `--hub`?~~ | Superseded by the web viewer (C4/C5). | Moot |
 | D3 | Push trigger: spawn-on-send, launchd backstop, or both? | **Spawn only.** Every send ships; no launchd on micro-m4. The backstop covered only "mini unreachable at send time, then micro-m4 idle" — and even then the entry ships on the next send. Not worth a plist. | **Decided 2026-09-19 (Dave)** |
 | D4 | Relay remote cadence | 30 s. Box messages are boot/update/throttle reports; nothing there needs 2 s. Ships inert in Phase 1. | Open |
-| D5 | Relay pings Healthchecks `/fail` when Keychain tokens are missing? | **Yes.** It turns F5 from silent into paged, at the cost of three lines. | Open |
+| D5 | Relay pings Healthchecks `/fail` when Keychain tokens are missing? | **Yes.** It turns F5 from silent into paged, at the cost of three lines. | **Decided 2026-10-02 (Dave)** |
 | D6 | Keep `--no-pushover` on `relay`? | Yes — it is the only session-level escape and costs nothing. | Open |
 | D7 | Branch | `relay-hub`, merged to main after S11 passes. | Open |
 | D8 | Remove the curses TUI entirely, with its tests (C10)? | **Yes.** Two viewers is two things to keep at parity. The page reaches strictly more places. `newsdesk tail` (X6) covers a terminal glance if it is ever missed. ⚠️ This deletes ~9 passing tests along with the code they test — flagged here so it is an explicit call, not a quiet one. | Open |
@@ -294,6 +294,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | D10 | Row order on the page | **Newest first.** The phone case decides it. | Open |
 | D11 | Web server inside the relay process, or a separate `newsdesk web`? | **Inside.** The relay has each entry in hand the instant it is consumed, so SSE is zero-latency with no file watching; one plist, one log, one process to keep alive. The thread is fenced (F8). | Open |
 | D12 | **`pushover_min_priority` on the hub once it relays 24/7 (K3): keep 2, or lower to 1?** Added 2026-10-02 from hvac_monitor's Lake House freeze watch (`docs/freeze-watch-plan.md` §9 N6), for Dave to revisit at the cutover. | **Decide at S4/S5 with these facts.** At **2** (today) only emergencies page: the freeze watch's first stages — Lake house dark at 90 min, Nest offline at 30 min, can't see the Nest, collector down, Longmont offline, Longmont on battery with > 2 h of runway — stay on the page and in the hvac check-in, and the phone hears a Lake power cut at 4 h (if Gaylord < 40 °F) and a furnace that lost 24 V at 2 h 15 m. At **1** those first stages page too, ~2½ h and ~1½ h sooner. ⚠️ The threshold is global: `~/.claude/hooks/newsdesk-notify.sh` sends **every Claude Code permission prompt at priority 1**, so at 1 each one from every session pages the phone; backup-migration, Memex and PostCardMaker choose per message. A per-project threshold (or the hook at 0) would remove the trade-off. Related: **F7** — the relay's fire-and-forget forwarding loses an alarm raised during a Longmont internet blip; the freeze watch carries a second path for its emergencies through healthchecks.io (`HEALTHCHECKS_FREEZE_ALARM_URL`). | **Open — Dave, at the cutover** |
+| D13 | Healthchecks on any machine other than the mini? | **No — one check, `newsdesk-relay`, on the hub.** micro-m4 sleeps, so a dead-man there pages for nothing; a failed push loses nothing (F4); and a periodic ping would need the launchd job D3 rejected. The boxes are pulled and carry no outbound path or daemon (P2); the relay already tracks last-successful-pull per remote, so a dark box is an alert the hub raises, and hvac_monitor's freeze watch covers the urgent case with its own Healthchecks path. A dead mini pages twice if the backup-monitor check (R5) is live — accepted: one says the mini is gone, the other says the relay is. | **Decided 2026-10-02 (Dave)** |
 
 ## 10. Deferred / out of scope
 
