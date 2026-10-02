@@ -1,4 +1,4 @@
-*Last updated: 2026-10-02 08:50 MDT*
+*Last updated: 2026-10-02 09:20 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
@@ -26,7 +26,7 @@ Four things change together:
 | M1 | micro-mac-mini (`davidmiller`) | **Hub.** Sole consumer of every queue; sole Pushover forwarder; owns the unified history; serves the viewer | `newsdesk relay` under launchd (KeepAlive), which also hosts the web server |
 | M2 | micro-m4 (`dave`) | **Pushing sender.** Writes locally, ships its queue to the hub | `newsdesk send` (unchanged callers) → spawns a detached `newsdesk push`. No launchd on this machine |
 | M3 | Lewiston agent boxes ×3 (`tag:agent`) — **Phase 2** | **Pulled sender.** Writes locally, nothing else | `newsdesk send` only (hvac plan W7). No daemon, no key, no outbound path |
-| M4 | Any browser on the tailnet — laptop, phone | **Viewer.** Reads the hub's history live | `https://micro-mac-mini.<tailnet>.ts.net` (or `http://100.70.51.21:5556`) |
+| M4 | Any browser on the tailnet — laptop, phone | **Viewer.** Reads the hub's history live | `https://micro-mac-mini.<tailnet>.ts.net` (`http://100.70.51.21:5556` answers only if `web_bind` is set to the tailnet IP, F10) |
 
 ### 2.2 Data flow
 
@@ -139,16 +139,16 @@ One static file, `web/index.html`, vanilla JS, no build, mobile-first. Parity wi
 
 | ID | Curses today | Page | Notes |
 |----|--------------|------|-------|
-| V1 | `L` latest / `H` history | One list, **newest first** (D10). Entries that arrived since the page opened are highlighted and counted in the tab title: `(3) newsdesk` | Newest-first because on a phone you open it and want the latest without scrolling. A scroll-to-oldest is a scroll, not a mode |
-| V2 | `C` clear | "Mark read" — clears highlights and the title count | Client-side only |
-| V3 | `S` save snapshot | Link to `/api/history` | The JSONL *is* the snapshot |
-| V4 | `B` bell threshold | 🔔 toggle + threshold select (≥1 / ≥0 / ≥−1 / off), persisted in `localStorage` | Browsers block audio until one user gesture — the toggle *is* the gesture, then `AudioContext` beeps. Same semantics as `should_bell` |
-| V5 | `V` show silent | Checkbox, persisted | Priority −2 hidden by default, as today |
-| V6 | `?` help pages | Priority legend in a collapsible footer | Keychain status moves to V7 |
-| V7 | Header status line | `relay 3s ago · pushover ≥ 2 · remotes 0/0` from `state` events. **Red banner** when `EventSource` is disconnected or the state is older than `RELAY_STALE_AFTER_S` | A viewer that cannot tell the relay is dead is the same hole as today |
-| V8 | `🔗` link marker | The url rendered as an actual link, labelled with `url_title` | Strictly better |
-| V9 | — | Filter box matching project / machine / title / message | next-steps F1, free on the client |
-| V10 | — | Each row: local time, project, machine, priority icon, title — message | Same fields as `format_entry`; `machine` is what distinguishes senders in a unified feed |
+| U1 | `L` latest / `H` history | One list, **newest first** (D10). Entries that arrived since the page opened are highlighted and counted in the tab title: `(3) newsdesk` | Newest-first because on a phone you open it and want the latest without scrolling. A scroll-to-oldest is a scroll, not a mode |
+| U2 | `C` clear | "Mark read" — clears highlights and the title count | Client-side only |
+| U3 | `S` save snapshot | Link to `/api/history` | The JSONL *is* the snapshot |
+| U4 | `B` bell threshold | 🔔 toggle + threshold select (≥1 / ≥0 / ≥−1 / off), persisted in `localStorage` | Browsers block audio until one user gesture — the toggle *is* the gesture, then `AudioContext` beeps. Same semantics as `should_bell` |
+| U5 | `V` show silent | Checkbox, persisted | Priority −2 hidden by default, as today |
+| U6 | `?` help pages | Priority legend in a collapsible footer | Keychain status moves to U7 |
+| U7 | Header status line | `relay 3s ago · pushover ≥ 2 · remotes 0/0` from `state` events. **Red banner** when `EventSource` is disconnected or the state is older than `RELAY_STALE_AFTER_S` | A viewer that cannot tell the relay is dead is the same hole as today |
+| U8 | `🔗` link marker | The url rendered as an actual link, labelled with `url_title` | Strictly better |
+| U9 | — | Filter box matching project / machine / title / message | next-steps F1, free on the client |
+| U10 | — | Each row: local time, project, machine, priority icon, title — message | Same fields as `format_entry`; `machine` is what distinguishes senders in a unified feed |
 
 Nothing is stored server-side by the page. Web Notifications are out of scope (X7) — Pushover already does phone push; this is a viewer.
 
@@ -196,7 +196,7 @@ One plist, one machine. The relay is a user agent (`gui/` domain), not a system 
 
 ### 3.10 C10 — Removed with the curses TUI
 
-Deleted outright, with their tests (D8): `cmd_watch`, `cmd_watch_curses`, the `watch` subparser, `import curses`, and the helpers only the TUI used — `format_entry`, `_fit_field`, `should_display`, `priority_icon` / `PRIORITY_ICONS`, `should_bell`, `cycle_bell_threshold`, `bell_threshold_label`, `pushover_status_label`, `DISPLAY_FIELD_WIDTH`, `LINK_MARKER`, `DEFAULT_BELL_THRESHOLD`, `BELL_THRESHOLD_CYCLE`. About 300 lines of `newsdesk.py` and ~9 of the 72 tests. The page carries its own icon map and bell rule.
+Deleted outright, with their tests (D8): `cmd_watch`, `cmd_watch_curses`, the `watch` subparser, `import curses`, and the helpers only the TUI used — `format_entry`, `_fit_field`, `should_display`, `priority_icon` / `PRIORITY_ICONS`, `should_bell`, `cycle_bell_threshold`, `bell_threshold_label`, `pushover_status_label`, `DISPLAY_FIELD_WIDTH`, `LINK_MARKER`, `DEFAULT_BELL_THRESHOLD`, `BELL_THRESHOLD_CYCLE`. About 355 of the 731 lines of `newsdesk.py` and 30 of the 72 tests (ten test classes). The page carries its own icon map and bell rule.
 
 `should_forward_pushover` stays (the relay uses it). `newsdesk` with no arguments keeps printing help. If a terminal view is ever missed, `newsdesk tail` (X6) is fifteen lines.
 
@@ -206,7 +206,7 @@ Deleted outright, with their tests (D8): `cmd_watch`, `cmd_watch_curses`, the `w
 |----|---------|--------|-------------|----------|
 | F1 | Relay process dies | Nothing forwarded; page shows red banner | launchd restarts within 10 s; Healthchecks fires if it keeps dying | Automatic |
 | F2 | Mini off / Tailscale down | Nothing forwarded, page unreachable | **Healthchecks dead-man → Pushover directly** (HC has a native Pushover integration; it must not route through newsdesk) | Manual — but *known* |
-| F3 | Box unreachable (Phase 2) | Its entries wait in its queue | hvac staleness alert (W6) covers the box being dark; the queue drains when it returns, timestamped | Automatic |
+| F3 | Box unreachable (Phase 2) | Its entries wait in its queue | hvac staleness alert (hvac W6) covers the box being dark; the queue drains when it returns, timestamped | Automatic |
 | F4 | micro-m4 can't reach mini | Entries wait in micro-m4's `.processing` / queue | The next send's push ships the backlog. If micro-m4 goes idle first, the backlog waits for the next send — delayed, never lost (D3) | Automatic on next send |
 | F5 | Keychain locked / tokens missing on mini | History and page work, no Pushover | Relay logs once; page header shows `no keychain tokens`; HC pinged with `/fail` so it **pages** (D5) | Manual |
 | F6 | Old `watch` on micro-m4 still polling the mini | Races the relay for the mini's queue; items it wins never hit the hub's history or Pushover | Nothing | **Deploy order S4 before S5** |
@@ -221,7 +221,7 @@ Order matters because of F6. Each step is complete before the next starts.
 
 | ID | Where | Step | Verifies |
 |----|-------|------|----------|
-| S1 | micro-m4 | Implement C1–C10 with tests (§8); commit on branch `relay-hub`; push | `python -m pytest tests/ -q` green |
+| S1 | micro-m4 | Implement C1–C10 with tests (§8); commit on branch `relay-hub`; push | `.venv/bin/python -m pytest tests/ -q` green |
 | S2 | mini | `git pull` in `~/Developer/newsdesk` (also retires the stale clone that lacks `--url`, #42) | `newsdesk send --help` shows `--url`; `newsdesk watch` no longer exists |
 | S3 | mini | Keychain: `security add-generic-password -a dave -s newsdesk-hc-url -w <url>`. Create the Healthchecks check `newsdesk-relay` (period 5 min, grace 5 min, Pushover integration). Config: `web_bind`/`web_port` only if not defaults | `newsdesk relay --once` prints `consumed=… remotes=0/0` |
 | S4 | micro-m4 | Config: delete `mini` from `remote_machines`; add `hub`. **Quit the running `watch`.** From here until S5 completes, the mini's queue is unconsumed — minutes, and it is durable | `cat ~/.config/newsdesk/config.json` |
@@ -244,7 +244,7 @@ Prerequisites: hvac plan W3/W7 landed, so `newsdesk` is installed on each box an
 | Q2 | mini | `~/.ssh/config` alias per box with matching `User`; one manual `ssh <box> true` each to populate `known_hosts` — BatchMode refuses unknown hosts **silently** (the poll just returns nothing) | `ssh -o BatchMode=yes <box> true` exits 0 |
 | Q3 | mini | Add the three `remote_machines` entries; `launchctl kickstart -k gui/$(id -u)/com.dave.newsdesk-relay` (config is read at startup) | `relay.log` shows `remotes=3/3`; page header shows `remotes 3/3` |
 | Q4 | a box | `newsdesk send "Pull test" "from lake-agent-1" --priority 0` | Row on the page within 30 s with the box's machine name |
-| Q5 | hvac_monitor | Amend W7 (O1) | — |
+| Q5 | hvac_monitor | Amend hvac W7 (O1) | — |
 
 Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Local Network Privacy (#698 was LAN; 100.x should be exempt — confirm on first run).
 
@@ -276,7 +276,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | T8 | `test_web_routes` | Real `ThreadingHTTPServer` on an ephemeral port: `/` serves the file with `no-store`; `/api/state` is JSON; unknown path is 404 |
 | T9 | `test_sse_fanout_and_keepalive` | A subscriber receives `event: entry` for a consumed entry and a `: keepalive` after `SSE_KEEPALIVE_S` (mock clock); a subscriber whose write fails is dropped |
 | T10 | `test_heartbeat_pings_when_url_present` | curl spawned iff URL; `/fail` suffix when tokens missing; spawned detached and not waited on (a mock curl that never returns does not delay the next cycle); no ping from a cycle that raised before completing |
-| T11 | Existing tests | The ~63 that survive C10 still green; the ~9 TUI-only tests go with the TUI (D8) |
+| T11 | Existing tests | The 42 that survive C10 still green; the 30 TUI-only tests go with the TUI (D8) |
 
 ## 9. Decisions
 
@@ -289,7 +289,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | D5 | Relay pings Healthchecks `/fail` when Keychain tokens are missing? | **Yes.** It turns F5 from silent into paged, at the cost of three lines. | **Decided 2026-10-02 (Dave)** |
 | D6 | Keep `--no-pushover` on `relay`? | Yes — it is the only session-level escape and costs nothing. | Open |
 | D7 | Branch | `relay-hub`, merged to main after S11 passes. | Open |
-| D8 | Remove the curses TUI entirely, with its tests (C10)? | **Yes.** Two viewers is two things to keep at parity. The page reaches strictly more places. `newsdesk tail` (X6) covers a terminal glance if it is ever missed. ⚠️ This deletes ~9 passing tests along with the code they test — flagged here so it is an explicit call, not a quiet one. | Open |
+| D8 | Remove the curses TUI entirely, with its tests (C10)? | **Yes.** Two viewers is two things to keep at parity. The page reaches strictly more places. `newsdesk tail` (X6) covers a terminal glance if it is ever missed. ⚠️ This deletes 30 of the 72 passing tests (ten classes) and about half of `newsdesk.py` along with the code they test — flagged here so it is an explicit call, not a quiet one. | Open |
 | D9 | Exposure: `tailscale serve` (loopback bind, tailnet HTTPS, hostname) or bind the tailnet IP on 5556 (plain http)? | **`tailscale serve` first.** No new all-interfaces listener, a real URL, HTTPS. Fallback is one config key (`web_bind`). Untried on this tailnet; S6 is where it proves itself. | Open |
 | D10 | Row order on the page | **Newest first.** The phone case decides it. | Open |
 | D11 | Web server inside the relay process, or a separate `newsdesk web`? | **Inside.** The relay has each entry in hand the instant it is consumed, so SSE is zero-latency with no file watching; one plist, one log, one process to keep alive. The thread is fenced (F8). | Open |
@@ -301,7 +301,7 @@ Verify-don't-assume at Q3: launchd on the mini reaching Tailscale peers under Lo
 | ID | Item | Why not now |
 |----|------|-------------|
 | X1 | Phase 2 box pull | Dave's call — planned in §6, no Pi-side work yet |
-| X2 | SSH backoff for unreachable remotes (next-steps R2) | 30 s cadence × 2 s ConnectTimeout × 3 boxes is bounded at 6 s per cycle; tolerable |
+| X2 | SSH backoff for unreachable remotes (next-steps R2) | 30 s cadence × 3 s `SSH_COMMAND_TIMEOUT` × 3 boxes is bounded at 9 s per cycle; tolerable |
 | X3 | Checking the Pushover response (#24, next-steps R4) | Separate fix, separate commit |
 | X4 | Replacing SSH+JSONL with an HTTP ingest on the mini (next-steps I1) | #821 already rejected a push API on the mini for hvac for reimplementing concerns the pull path gets free; same argument here. The web server here is read-only |
 | X5 | ntfy (#206) | Deferred there; this closes the "unified web view" gap that was ntfy's main draw |
