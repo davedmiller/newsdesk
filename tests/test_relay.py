@@ -848,6 +848,37 @@ class TestWebRoutes:
             assert f'id="{element_id}"' in html
         assert "/api/feed" in html
 
+    def test_page_links_its_icons_and_manifest(self, web):
+        base, rt = web
+        html = get(base + "/")[2].decode()
+        assert 'rel="manifest" href="/manifest.webmanifest"' in html
+        assert 'rel="apple-touch-icon" href="/apple-touch-icon.png"' in html
+        assert 'rel="icon" href="/icon.svg"' in html
+
+    def test_icons_and_manifest_are_served_with_their_types(self, web):
+        base, rt = web
+        expected = {
+            "/icon.svg": "image/svg+xml",
+            "/icon-192.png": "image/png",
+            "/icon-512.png": "image/png",
+            "/apple-touch-icon.png": "image/png",
+            "/manifest.webmanifest": "application/manifest+json",
+        }
+        for path, content_type in expected.items():
+            status, headers, body = get(base + path)
+            assert status == 200 and headers["Content-Type"] == content_type, path
+            assert body, path
+        manifest = json.loads(get(base + "/manifest.webmanifest")[2])
+        assert {i["src"] for i in manifest["icons"]} == {"/icon-192.png", "/icon-512.png"}
+        assert get(base + "/icon-512.png")[2][:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_only_listed_files_are_served(self, web):
+        base, rt = web
+        for path in ("/index.html", "/../newsdesk.py", "/web/icon.svg", "/icon.png"):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                get(base + path)
+            assert e.value.code == 404, path
+
     def test_page_never_builds_markup_from_entry_text(self):
         html = open(os.path.join(os.path.dirname(nd.__file__), "web", "index.html")).read()
         assert "innerHTML" not in html and "textContent" in html

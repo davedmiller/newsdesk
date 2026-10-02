@@ -711,7 +711,16 @@ def _relay_log_line(summary):
 # ---------------------------------------------------------------------------
 # Web viewer (served by the relay)
 # ---------------------------------------------------------------------------
-WEB_PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "index.html")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+# The only files the viewer serves: URL path -> (file in WEB_DIR, content type).
+WEB_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/icon-192.png": ("icon-192.png", "image/png"),
+    "/icon-512.png": ("icon-512.png", "image/png"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+}
 
 
 def build_feed(rt, limit):
@@ -726,7 +735,7 @@ def build_feed(rt, limit):
 
 
 def make_web_server(rt, bind, port):
-    """Build the viewer's HTTP server: the page, the feed, and nothing else."""
+    """Build the viewer's HTTP server: the page and its icons, the feed, and nothing else."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, status, content_type, body):
@@ -739,14 +748,15 @@ def make_web_server(rt, bind, port):
 
         def do_GET(self):
             url = urllib.parse.urlsplit(self.path)
-            if url.path == "/":
+            if url.path in WEB_FILES:
+                name, content_type = WEB_FILES[url.path]
                 try:
-                    with open(WEB_PAGE_PATH, "rb") as f:
+                    with open(os.path.join(WEB_DIR, name), "rb") as f:
                         body = f.read()
                 except OSError:
-                    self._send(500, "text/plain; charset=utf-8", b"page file missing\n")
+                    self._send(500, "text/plain; charset=utf-8", f"{name} missing\n".encode())
                     return
-                self._send(200, "text/html; charset=utf-8", body)
+                self._send(200, content_type, body)
             elif url.path == "/api/feed":
                 limit = WEB_FEED_ENTRIES
                 try:
