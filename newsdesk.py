@@ -335,8 +335,16 @@ def claim_spool(queue_path):
 
     The caller unlinks the paths once the entries are in history.
     """
+    def arrival(path):
+        try:
+            return (os.path.getmtime(path), path)
+        except OSError:
+            return (0.0, path)
+
+    # Oldest first: the names are random ids, so sorting by name would shuffle
+    # batches that arrived within one cycle.
     entries, paths = [], []
-    for path in sorted(glob.glob(glob.escape(queue_path) + ".in.*")):
+    for path in sorted(glob.glob(glob.escape(queue_path) + ".in.*"), key=arrival):
         entries.extend(parse_jsonl(path))
         paths.append(path)
     return entries, paths

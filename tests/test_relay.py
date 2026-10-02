@@ -137,6 +137,21 @@ class TestRelayCycle:
         assert sorted(titles(config["history_file"])) == ["kept", "kept2"]
 
 
+class TestSpoolOrder:
+    """Batches pushed within one cycle keep the order they arrived in."""
+
+    def test_spool_files_are_claimed_oldest_first_not_by_name(self, config, keychain, forwards):
+        # names sort z, m, a — the reverse of arrival
+        for age, name, title in ((30, "z", "first"), (20, "m", "second"), (10, "a", "third")):
+            path = config["queue_file"] + ".in." + name
+            write_jsonl(path, [entry(title, id=title)])
+            stamp = time.time() - age
+            os.utime(path, (stamp, stamp))
+        rt = nd.new_relay(config, now=1000.0)
+        nd.relay_cycle(rt, 1000.0)
+        assert titles(config["history_file"]) == ["first", "second", "third"]
+
+
 class TestRelayDedupe:
     """T12: an id is accepted once, however many times it is delivered."""
 
