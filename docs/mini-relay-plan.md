@@ -334,17 +334,17 @@ Cycle tests call `relay_cycle(state, now)` with an explicit `now`; nothing sleep
 
 | ID | Question | Recommendation | Status |
 |----|----------|----------------|--------|
-| D1 | Does any consume path survive outside `relay`? | **No, once S12 removes `watch`.** | Open |
+| D1 | Does any consume path survive outside `relay`? | **No, once S12 removes `watch`.** | **Decided 2026-10-02 (Dave)** |
 | D2 | ~~Viewer on micro-m4: `ssh -t mini` or `--hub`?~~ | Superseded by the web viewer. | Moot |
 | D3 | Push trigger: spawn-on-send, launchd backstop, or both? | **Spawn only.** No launchd on micro-m4. | **Decided 2026-09-19 (Dave)** |
-| D4 | Relay remote cadence | 30 s. Box messages are boot/update/throttle reports. | Open |
+| D4 | Relay remote cadence | 30 s. Box messages are boot/update/throttle reports. | **Decided 2026-10-02 (Dave)** |
 | D5 | Relay pings Healthchecks `/fail` when Keychain tokens are missing? | **Yes.** It turns F5 from silent into paged. | **Decided 2026-10-02 (Dave)** |
-| D6 | Keep `--no-pushover` on `relay`? | Yes — S3 depends on it. | Open |
-| D7 | Branch | `relay-hub`; the mini runs the branch from S2; merged to main at S13. | Open |
+| D6 | Keep `--no-pushover` on `relay`? | Yes — S3 depends on it. | **Decided 2026-10-02 (Dave)** |
+| D7 | Branch | `relay-hub`; the mini runs the branch from S2; merged to main at S13. | **Decided 2026-10-02 (Dave)** |
 | D8 | Remove the curses TUI, and when? | **Yes, at S12 — after the relay has passed S11.** Keeping it as a viewer of the hub would mean rewriting it as a read-only client of the page API, about 250 lines of curses kept in step with the page. `newsdesk tail` (X6) covers a terminal glance. | **Decided 2026-10-02 (Dave)** |
 | D9 | Exposure: `tailscale serve` or bind the tailnet IP on 5556 (plain http)? | **`tailscale serve` first.** No new all-interfaces listener, a real URL, HTTPS. Fallback is one config key. | **Decided 2026-10-02 (Dave)**; SP1 confirms it or triggers the fallback |
-| D10 | Row order on the page | **Newest first, in the order the hub accepted them.** | Open |
-| D11 | Web server inside the relay process, or a separate `newsdesk web`? | **Inside.** One plist, one log, one process; the state is served from memory. | Open |
+| D10 | Row order on the page | **Newest first, in the order the hub accepted them.** | **Decided 2026-10-02 (Dave)** |
+| D11 | Web server inside the relay process, or a separate `newsdesk web`? | **Inside.** One plist, one log, one process; the state is served from memory. | **Decided 2026-10-02 (Dave)** |
 | D12 | `pushover_min_priority` on the hub once it relays 24/7: keep 2, or lower to 1? | **Decide at S4/S5.** At 1 the freeze watch's first stages page hours sooner, but every Claude Code permission prompt pages too, because the threshold is global. The facts are in Appendix B. | **Open — Dave, at the cutover** |
 | D13 | Healthchecks on any machine other than the mini? | **No — one check, `newsdesk-relay`, on the hub.** micro-m4 sleeps; the boxes carry no outbound path, and a dark box is hvac W6's alert. A dead mini pages twice if the backup-monitor check is live — accepted. | **Decided 2026-10-02 (Dave)** |
 | D14 | A delivery whose acknowledgement is lost repeats. Dedupe, or accept duplicates? | **Dedupe**, by an `id` on each entry. | **Decided 2026-10-02 (Dave)** |
