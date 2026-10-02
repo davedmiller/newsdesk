@@ -545,7 +545,7 @@ class TestPushRecovery:
     def test_old_processing_is_still_shipped(self, hub_config, ships):
         processing = hub_config["queue_file"] + ".processing"
         write_jsonl(processing, [entry("ancient")])
-        old = time.time() - nd.STALE_PROCESSING_AGE - 100
+        old = time.time() - 2 * 86400  # older than any stale rule
         os.utime(processing, (old, old))
         assert nd.push_queue(hub_config) == 0
         assert ships["batches"] == [["ancient"]]

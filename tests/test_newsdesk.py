@@ -1,4 +1,4 @@
-# ABOUTME: Unit tests for newsdesk CLI — send, config, JSONL parsing, watch helpers.
+# ABOUTME: Unit tests for newsdesk CLI — send, config, JSONL parsing, Pushover forwarding.
 # ABOUTME: TDD: tests are written before implementation.
 
 import argparse
@@ -197,7 +197,7 @@ class TestMultiMachineConfig:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: watch tests
+# Phase 2: forwarding tests
 # ---------------------------------------------------------------------------
 
 
@@ -224,81 +224,6 @@ class TestHistoryCap:
         nd.append_to_history(history_path, entries)
         result = nd.parse_jsonl(history_path)
         assert len(result) == 2
-
-
-class TestPriorityIconMapping:
-    """U9: priority values map to correct icons."""
-
-    def test_all_priorities(self):
-        assert nd.priority_icon(-2) is None
-        assert nd.priority_icon(-1) == ""
-        assert nd.priority_icon(0) == "\u2705"
-        assert nd.priority_icon(1) == "\U0001f514"
-        assert nd.priority_icon(2) == "\U0001f514"
-
-    def test_unknown_priority_defaults(self):
-        assert nd.priority_icon(99) == "\u2705"
-
-
-class TestPriorityBell:
-    """U10: priority >= threshold triggers bell."""
-
-    def test_bell_for_high_default_threshold(self):
-        assert nd.should_bell(1, 1) is True
-        assert nd.should_bell(2, 1) is True
-
-    def test_no_bell_for_low_default_threshold(self):
-        assert nd.should_bell(0, 1) is False
-        assert nd.should_bell(-1, 1) is False
-        assert nd.should_bell(-2, 1) is False
-
-    def test_threshold_zero_includes_normal(self):
-        assert nd.should_bell(0, 0) is True
-        assert nd.should_bell(1, 0) is True
-        assert nd.should_bell(-1, 0) is False
-
-    def test_threshold_minus_one_includes_quiet(self):
-        assert nd.should_bell(-1, -1) is True
-        assert nd.should_bell(0, -1) is True
-        assert nd.should_bell(-2, -1) is False  # silent never bells
-
-    def test_threshold_none_disables_bell(self):
-        assert nd.should_bell(2, None) is False
-        assert nd.should_bell(0, None) is False
-        assert nd.should_bell(-1, None) is False
-
-    def test_silent_priority_never_bells(self):
-        # -2 is silent by definition — no threshold should make it bell
-        assert nd.should_bell(-2, 1) is False
-        assert nd.should_bell(-2, 0) is False
-        assert nd.should_bell(-2, -1) is False
-
-
-class TestCycleBellThreshold:
-    """U10b: B key cycles bell threshold: 1 -> 0 -> -1 -> off -> 1."""
-
-    def test_cycle_from_default(self):
-        assert nd.cycle_bell_threshold(1) == 0
-
-    def test_cycle_loosens(self):
-        assert nd.cycle_bell_threshold(0) == -1
-
-    def test_cycle_to_off(self):
-        assert nd.cycle_bell_threshold(-1) is None
-
-    def test_cycle_from_off_back_to_default(self):
-        assert nd.cycle_bell_threshold(None) == 1
-
-
-class TestPrioritySilentSkipped:
-    """U11: priority -2 entries are not displayed by default."""
-
-    def test_silent_skipped(self):
-        assert nd.should_display({"priority": -2}) is False
-
-    def test_others_displayed(self):
-        for p in (-1, 0, 1, 2):
-            assert nd.should_display({"priority": p}) is True
 
 
 class TestSilentSkipsPushover:
@@ -334,23 +259,8 @@ class TestPushoverMinPriority:
         assert nd.DEFAULT_CONFIG["pushover_min_priority"] == -1
 
 
-class TestSilentVisibleInHistory:
-    """U22: show_silent flag controls whether -2 entries appear in display."""
-
-    def test_hidden_by_default(self):
-        assert nd.should_display({"priority": -2}, show_silent=False) is False
-
-    def test_visible_when_toggled(self):
-        assert nd.should_display({"priority": -2}, show_silent=True) is True
-
-    def test_normal_always_visible(self):
-        for p in (-1, 0, 1, 2):
-            assert nd.should_display({"priority": p}, show_silent=False) is True
-            assert nd.should_display({"priority": p}, show_silent=True) is True
-
-
 class TestPushoverStatusLabel:
-    """U: pushover_status_label summarizes forwarding state for the watch header."""
+    """U: pushover_status_label summarizes forwarding state for the relay state and page header."""
 
     def test_suppressed(self):
         assert nd.pushover_status_label(True, "a", "b", 1) == "off (--no-pushover)"
@@ -405,166 +315,6 @@ class TestDetectProjectFromGit:
         nested.mkdir(parents=True)
         result = nd.detect_project(str(nested))
         assert result == tmp_path.name.lower()
-
-
-class TestProjectFieldInDisplay:
-    """U16: display output includes [project] prefix."""
-
-    def test_format_includes_project(self):
-        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World", "priority": 0, "project": "pcm"}
-        line = nd.format_entry(entry)
-        assert "pcm" in line
-        assert "Hello" in line
-        assert "World" in line
-
-
-class TestMachineNameInDisplay:
-    """U25: display output includes machine name."""
-
-    def test_format_includes_machine(self):
-        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World",
-                 "priority": 0, "project": "pcm", "machine": "mini"}
-        line = nd.format_entry(entry)
-        assert "mini" in line
-
-    def test_format_without_machine_field(self):
-        entry = {"ts": 1709750535.0, "title": "Hello", "message": "World",
-                 "priority": 0, "project": "pcm"}
-        line = nd.format_entry(entry)
-        assert "Hello" in line
-
-
-class TestFieldPadding:
-    """U26: project and machine fields are padded/truncated to fixed width."""
-
-    def test_short_project_padded(self):
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": "pcm", "machine": "mini"}
-        line = nd.format_entry(entry)
-        # project field should be padded to DISPLAY_FIELD_WIDTH
-        assert f"{'pcm':<{nd.DISPLAY_FIELD_WIDTH}}" in line
-
-    def test_long_project_truncated(self):
-        long_name = "a" * (nd.DISPLAY_FIELD_WIDTH + 10)
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": long_name, "machine": "mini"}
-        line = nd.format_entry(entry)
-        expected = long_name[:nd.DISPLAY_FIELD_WIDTH - 1] + "\u2026"
-        assert expected in line
-
-    def test_short_machine_padded(self):
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": "pcm", "machine": "m4"}
-        line = nd.format_entry(entry)
-        assert f"{'m4':<{nd.DISPLAY_FIELD_WIDTH}}" in line
-
-    def test_long_machine_truncated(self):
-        long_name = "b" * (nd.DISPLAY_FIELD_WIDTH + 10)
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": "pcm", "machine": long_name}
-        line = nd.format_entry(entry)
-        expected = long_name[:nd.DISPLAY_FIELD_WIDTH - 1] + "\u2026"
-        assert expected in line
-
-    def test_exact_width_not_truncated(self):
-        name = "a" * nd.DISPLAY_FIELD_WIDTH
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": name, "machine": "mini"}
-        line = nd.format_entry(entry)
-        assert name in line
-
-
-class TestLinkMarkerInDisplay:
-    """U: format_entry shows LINK_MARKER iff the entry carries a url, and
-    left of the message so it survives width-clipping in the watch UI."""
-
-    def test_marker_present_when_url(self):
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": "pcm", "url": "http://x/"}
-        line = nd.format_entry(entry)
-        assert nd.LINK_MARKER in line
-        # left of the title/message so a clipped long line still shows it
-        assert line.index(nd.LINK_MARKER) < line.index("T")
-
-    def test_no_marker_without_url(self):
-        entry = {"ts": 1709750535.0, "title": "T", "message": "M",
-                 "priority": 0, "project": "pcm"}
-        line = nd.format_entry(entry)
-        assert nd.LINK_MARKER not in line
-
-
-class TestQueueRenameReadDelete:
-    """U18: rename-read-delete pattern works."""
-
-    def test_consumes_queue(self, tmp_path):
-        queue = tmp_path / "queue.jsonl"
-        entry = {"ts": 1.0, "title": "A", "message": "m", "priority": 0, "project": "p"}
-        queue.write_text(json.dumps(entry) + "\n")
-        entries = nd.consume_local_queue(str(queue))
-        assert len(entries) == 1
-        assert entries[0]["title"] == "A"
-        assert not queue.exists()
-        assert not (tmp_path / "queue.jsonl.processing").exists()
-
-    def test_empty_queue(self, tmp_path):
-        entries = nd.consume_local_queue(str(tmp_path / "queue.jsonl"))
-        assert entries == []
-
-    def test_new_sends_during_consume(self, tmp_path):
-        queue = tmp_path / "queue.jsonl"
-        entry = {"ts": 1.0, "title": "A", "message": "m", "priority": 0, "project": "p"}
-        queue.write_text(json.dumps(entry) + "\n")
-        entries = nd.consume_local_queue(str(queue))
-        assert len(entries) == 1
-        entry2 = {"ts": 2.0, "title": "B", "message": "m", "priority": 0, "project": "p"}
-        queue.write_text(json.dumps(entry2) + "\n")
-        entries2 = nd.consume_local_queue(str(queue))
-        assert len(entries2) == 1
-        assert entries2[0]["title"] == "B"
-
-
-class TestStaleProcessingDeleted:
-    """U19: .processing file older than STALE_PROCESSING_AGE deleted without reading."""
-
-    def test_stale_deleted(self, tmp_path):
-        queue = tmp_path / "queue.jsonl"
-        processing = tmp_path / "queue.jsonl.processing"
-        entry = {"ts": 1.0, "title": "Stale", "message": "m", "priority": 0, "project": "p"}
-        processing.write_text(json.dumps(entry) + "\n")
-        old_time = time.time() - (2 * 86400)
-        os.utime(str(processing), (old_time, old_time))
-        entries = nd.consume_local_queue(str(queue))
-        assert entries == []
-        assert not processing.exists()
-
-
-class TestFreshProcessingRecovered:
-    """U20: .processing file younger than STALE_PROCESSING_AGE read then deleted."""
-
-    def test_fresh_recovered(self, tmp_path):
-        queue = tmp_path / "queue.jsonl"
-        processing = tmp_path / "queue.jsonl.processing"
-        entry = {"ts": 1.0, "title": "Recovered", "message": "m", "priority": 0, "project": "p"}
-        processing.write_text(json.dumps(entry) + "\n")
-        entries = nd.consume_local_queue(str(queue))
-        assert len(entries) == 1
-        assert entries[0]["title"] == "Recovered"
-        assert not processing.exists()
-
-    def test_fresh_processing_plus_new_queue(self, tmp_path):
-        queue = tmp_path / "queue.jsonl"
-        processing = tmp_path / "queue.jsonl.processing"
-        old_entry = {"ts": 1.0, "title": "Old", "message": "m", "priority": 0, "project": "p"}
-        processing.write_text(json.dumps(old_entry) + "\n")
-        new_entry = {"ts": 2.0, "title": "New", "message": "m", "priority": 0, "project": "p"}
-        queue.write_text(json.dumps(new_entry) + "\n")
-        entries = nd.consume_local_queue(str(queue))
-        assert len(entries) == 2
-        titles = [e["title"] for e in entries]
-        assert "Old" in titles
-        assert "New" in titles
-        assert not processing.exists()
-        assert not queue.exists()
 
 
 # ---------------------------------------------------------------------------
