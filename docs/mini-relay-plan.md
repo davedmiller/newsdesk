@@ -1,8 +1,8 @@
-*Last updated: 2026-10-02 10:47 MDT*
+*Last updated: 2026-10-02 10:48 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
-**Status: DRAFT for study. Nothing built.** Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). Decisions in §9 are open unless marked otherwise.
+**Status: DRAFT for study. Nothing built.** Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). All decisions in §9 are made except D12, which waits for the cutover.
 
 §3, §5 and §8 are the build spec. Rationale that is not needed to build sits in the appendices. The plan was reviewed and assessed on 2026-10-02; Appendix C says what each changed.
 
@@ -342,7 +342,7 @@ Cycle tests call `relay_cycle(state, now)` with an explicit `now`; nothing sleep
 | D6 | Keep `--no-pushover` on `relay`? | Yes — S3 depends on it. | Open |
 | D7 | Branch | `relay-hub`; the mini runs the branch from S2; merged to main at S13. | Open |
 | D8 | Remove the curses TUI, and when? | **Yes, at S12 — after the relay has passed S11.** Keeping it as a viewer of the hub would mean rewriting it as a read-only client of the page API, about 250 lines of curses kept in step with the page. `newsdesk tail` (X6) covers a terminal glance. | **Decided 2026-10-02 (Dave)** |
-| D9 | Exposure: `tailscale serve` or bind the tailnet IP on 5556 (plain http)? | **`tailscale serve` first.** No new all-interfaces listener, a real URL, HTTPS. Fallback is one config key. | Open — pending SP1 |
+| D9 | Exposure: `tailscale serve` or bind the tailnet IP on 5556 (plain http)? | **`tailscale serve` first.** No new all-interfaces listener, a real URL, HTTPS. Fallback is one config key. | **Decided 2026-10-02 (Dave)**; SP1 confirms it or triggers the fallback |
 | D10 | Row order on the page | **Newest first, in the order the hub accepted them.** | Open |
 | D11 | Web server inside the relay process, or a separate `newsdesk web`? | **Inside.** One plist, one log, one process; the state is served from memory. | Open |
 | D12 | `pushover_min_priority` on the hub once it relays 24/7: keep 2, or lower to 1? | **Decide at S4/S5.** At 1 the freeze watch's first stages page hours sooner, but every Claude Code permission prompt pages too, because the threshold is global. The facts are in Appendix B. | **Open — Dave, at the cutover** |
