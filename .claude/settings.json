@@ -23,7 +23,8 @@
       "Skill(ddm-assess-plan)",
       "Skill(ddm-compact-prep)",
       "Skill(ddm-resume-plan)",
-      "Bash(./newsdesk *)"
+      "Bash(./newsdesk *)",
+      "Read(~/.local/share/newsdesk/**)"
     ],
     "deny": [
       "Bash(git reset --hard*)",
