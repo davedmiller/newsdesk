@@ -1,8 +1,8 @@
-*Last updated: 2026-10-02 12:42 MDT*
+*Last updated: 2026-10-02 12:54 MDT*
 
 # Newsdesk — Hub-on-the-Mini Relay + Web Viewer
 
-**Status: DRAFT for study. Nothing built.** Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). All decisions in §9 are made except D12, which waits for the cutover.
+**Status: S1 built and pushed on `relay-hub` (2026-10-02); nothing deployed.** Phase 1 (relay, push, web viewer) is the work to do now. Phase 2 (pull from the Lewiston boxes) is deferred — no Pi-side work until Dave says so — but its code ships and is tested in Phase 1, so that Phase 2 is config and verification only (Appendix A). All decisions in §9 are made except D12, which waits for the cutover.
 
 §3, §5 and §8 are the build spec. Rationale that is not needed to build sits in the appendices. The plan was reviewed and assessed on 2026-10-02; Appendix C says what each changed.
 
@@ -135,7 +135,7 @@ A `ThreadingHTTPServer` (`daemon_threads = True`) in a daemon thread inside the 
 | ID | Route | Returns | Notes |
 |----|-------|---------|-------|
 | W1 | `GET /` | `web/index.html` | Located relative to `newsdesk.py`. Read from disk per request, `Cache-Control: no-store` — edit the page, reload, no relay restart |
-| W2 | `GET /api/feed?limit=<n>` | `{"state": {…}, "entries": […]}` | `state` is the relay state (C6), from memory. `entries` is the newest `limit` lines of `history.jsonl` (default `WEB_FEED_ENTRIES`), oldest → newest. File order is the order the hub accepted them. Safe against a concurrent history write because that write is a temp file plus `os.replace` (C11) |
+| W2 | `GET /api/feed?limit=<n>` | `{"state": {…}, "entries": […], "now": <hub time>, "stale_after_s": 180}` | `state` is the relay state (C6), from memory. `entries` is the newest `limit` lines of `history.jsonl` (default `WEB_FEED_ENTRIES`), oldest → newest; file order is the order the hub accepted them. `now` lets the page compute the relay's age without trusting the phone's clock. Safe against a concurrent history write because that write is a temp file plus `os.replace` (C11) |
 | W3 | anything else | 404 | No POST, no auth. Tailnet-only reachability *is* the auth, as for 5555/8766/8767 |
 
 There is no stream. The page polls W2 (C5). The web threads share nothing with the relay loop except a reference to the state dict, which the loop replaces whole on each heartbeat.
@@ -220,7 +220,7 @@ Deleted at S12, with their tests: `cmd_watch`, `cmd_watch_curses`, the `watch` s
 
 | Function | Change | Why |
 |----------|--------|-----|
-| `consume_local_queue` | Split into `claim_queue(path)` (merge into `.processing`, return entries, delete nothing) and `commit_queue(path)` (unlink). `consume_local_queue` becomes claim + commit and keeps its tests and its stale rule; `watch` is its caller until S12 | The relay commits after the history write; push needs a claim that does not delete |
+| `claim_queue(path)` / `commit_queue(path)` — new | Claim renames the queue to `.processing` and returns its entries, deleting nothing; if a `.processing` is already there it is returned as it stands and the queue waits for the next claim. Commit unlinks it. `claim_spool(path)` does the same for `queue.jsonl.in.*`. **`consume_local_queue` is left untouched** — `watch` is its only caller, and it goes with `watch` at S12 unless something still needs it | The relay commits after the history write; push ships `.processing` before anything newer. Leaving the old function alone keeps `watch` byte-for-byte as it was |
 | `append_to_history` | Writes a temp file and `os.replace`s it, through one atomic-write helper shared with `relay.state` | Web threads read the file while the relay rewrites it |
 | `read_keychain_token` | Gains `account="pushover"` | K5's URL is stored under account `dave` |
 | `forward_to_pushover` | Returns whether curl succeeded | Retry and the failure counters (C1) |
@@ -283,7 +283,7 @@ Order matters because of F6. **`watch` keeps working until S12**, so until then 
 
 | ID | Where | Step | Verifies |
 |----|-------|------|----------|
-| S1 | micro-m4 | Implement C1–C9 and C11 with tests (§8), **leaving `watch` and its tests in place**; commit on branch `relay-hub`; push | `.venv/bin/python -m pytest tests/ -q` green: today's 72 plus the new tests |
+| S1 | micro-m4 | Implement C1–C9 and C11 with tests (§8), **leaving `watch` and its tests in place**; commit on branch `relay-hub`; push | `.venv/bin/python -m pytest tests/ -q` green: today's 72 plus the new tests. ✅ **Done 2026-10-02:** 136 tests pass (72 existing + 64 new); the same code compiles and runs a real cycle and serves the page under the mini's Python 3.9.6; a real push over ssh landed a spool file in a temp directory on the mini; the page was loaded in Chrome against sample data |
 | S2 | mini | First resolve the uncommitted change to `.claude/settings.json` in the clone (ask Dave; §5.1.1). Then `git fetch && git checkout relay-hub` in `~/Developer/newsdesk` (also retires the stale clone that lacks `--url`, #42) | `newsdesk send --help` shows `--url`; `newsdesk relay --help` exists |
 | S3 | mini, **in a Terminal on the mini (screen share) — the Keychain is not usable over ssh** | Keychain: both Pushover tokens (`security add-generic-password -a pushover -s newsdesk-app-token -w <token>`, same for `newsdesk-user-key`) and `security add-generic-password -a dave -s newsdesk-hc-url -w <url>`. Config: `pushover_min_priority` 2 and `web_bind` `"100.70.51.21"`, explicitly. Create the Healthchecks check `newsdesk-relay` (period 5 min, grace 5 min, Pushover integration); run SP6 | `newsdesk init` shows both token ticks. `newsdesk relay --once --no-pushover` prints its summary line and writes `relay.state` — `--no-pushover` because micro-m4's `watch` is still the live consumer of this queue |
 | S4 | micro-m4 | Config: delete `mini` from `remote_machines`; add `hub`. **Quit the running `watch`.** Then `newsdesk send "Push check" "S4" --priority 0`. Until S5 completes the mini's queue is unconsumed — minutes, and it is durable | `ssh mini 'ls ~/.local/share/newsdesk/'` shows one `queue.jsonl.in.*` file holding that entry: the detached push, the ssh auth and the remote command all work before the relay is involved |
@@ -326,7 +326,7 @@ Cycle tests call `relay_cycle(state, now)` with an explicit `now`; nothing sleep
 | T1 | `test_relay_cycle_consumes_and_forwards` | One cycle: local queue and a spool file → history; forward called only for entries ≥ threshold and ≠ −2; `.processing` and the spool file gone only after history is written. `--once` prints the summary for an empty cycle, writes state, spawns no ping |
 | T2 | `test_relay_remote_cadence` | Remotes pulled on the first cycle and again only after `REMOTE_POLL_INTERVAL_S`; `remote_machines = []` pulls nothing; the ack runs after the history write and only for files that were returned; an unreached remote leaves its state entry unchanged |
 | T3 | `test_push_recovery` | (a) ssh fails → `.processing` holds the batch. (b) `.processing` exists, new sends land in the queue, ssh fails again → every entry is still on disk. (c) A `.processing` older than `STALE_PROCESSING_AGE` is still shipped. (d) Success after two failures ships each entry and leaves no file. (e) An ssh that exceeds `PUSH_SSH_TIMEOUT_S` counts as a failure |
-| T4 | `test_push_remote_command` | Run under `sh -c`: input lands as one `queue.jsonl.in.*` file with exactly the bytes sent, no temp file, `queue.jsonl` untouched. A loop doing claim-and-commit concurrently with 1,000 runs loses no line |
+| T4 | `test_push_remote_command` | Run under `sh -c`: input lands as one `queue.jsonl.in.*` file with exactly the bytes sent, no temp file, `queue.jsonl` untouched. A consumer thread claiming the spool concurrently with 150 runs loses no line (150, not the 1,000 first planned, to keep the suite at about five seconds) |
 | T5 | `test_push_lock` | An entry appended while a push is mid-ship is shipped by the same push's next loop iteration; a push started while the lock is held exits 0 having shipped nothing |
 | T6 | `test_send_spawns_push_only_with_hub` | `Popen` called iff `config.get("hub")`, with `start_new_session=True` and `[sys.executable, <newsdesk.py>, "push"]`; a `Popen` that raises leaves the entry queued and `send` returns 0; every entry carries an `id`; rotation is skipped iff `hub` is set |
 | T7 | `test_feed_limit_and_order` | W2 returns the newest `limit` entries in file order with the state alongside; an entry with an old `ts` accepted late is last |

@@ -1,0 +1,263 @@
+<!-- ABOUTME: The newsdesk web viewer — one static page served by `newsdesk relay`. -->
+<!-- ABOUTME: Polls /api/feed and re-renders; entry text is only ever set with textContent. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>newsdesk</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1c1c1e; --muted: #6b6b70; --line: #e3e3e8;
+    --unread: #fff6d6; --banner-bg: #c62828; --banner-fg: #ffffff; --link: #0a5fd1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111113; --fg: #ececf0; --muted: #9a9aa2; --line: #2a2a30;
+      --unread: #3a3210; --link: #7ab4ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: 8px 12px;
+  }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  #status { color: var(--muted); font-size: 13px; }
+  #banner {
+    display: none; background: var(--banner-bg); color: var(--banner-fg);
+    padding: 8px 12px; font-weight: 600;
+  }
+  #banner.on { display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .controls input[type="search"] { flex: 1 1 160px; min-width: 0; padding: 6px 8px; font: inherit; }
+  .controls button, .controls select { font: inherit; padding: 5px 9px; }
+  .controls label, .controls a { font-size: 13px; color: var(--muted); }
+  .controls a { color: var(--link); }
+  #list { list-style: none; margin: 0; padding: 0; }
+  #list li { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #list li.unread { background: var(--unread); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .meta span + span::before { content: " · "; }
+  .text { overflow-wrap: anywhere; }
+  .title { font-weight: 600; }
+  .text a { color: var(--link); margin-left: 6px; }
+  .empty { color: var(--muted); padding: 16px 12px; }
+  footer { color: var(--muted); font-size: 13px; padding: 12px; }
+  footer table { border-collapse: collapse; margin-top: 6px; }
+  footer td { padding: 2px 12px 2px 0; }
+</style>
+</head>
+<body>
+<div id="banner" role="alert"></div>
+<header>
+  <h1>newsdesk</h1>
+  <div id="status">connecting…</div>
+  <div class="controls">
+    <input id="filter" type="search" placeholder="Filter project, machine, text" autocomplete="off">
+    <button id="mark-read" type="button">Mark read</button>
+    <button id="bell" type="button" aria-pressed="false">🔕 Bell off</button>
+    <select id="bell-threshold" aria-label="Bell threshold">
+      <option value="1">priority ≥ 1</option>
+      <option value="0">priority ≥ 0</option>
+      <option value="-1">priority ≥ −1</option>
+    </select>
+    <label><input id="show-silent" type="checkbox"> show silent</label>
+    <a id="snapshot" href="/api/feed?limit=5000" target="_blank" rel="noopener">snapshot</a>
+  </div>
+</header>
+<ul id="list"></ul>
+<footer>
+  <details>
+    <summary>Priorities</summary>
+    <table>
+      <tr><td>−2 silent</td><td>hidden unless “show silent”; never sent to the phone</td></tr>
+      <tr><td>−1 quiet</td><td>no icon</td></tr>
+      <tr><td>0 normal</td><td>✅</td></tr>
+      <tr><td>1 high</td><td>🔔</td></tr>
+      <tr><td>2 urgent</td><td>🔔 emergency on the phone</td></tr>
+    </table>
+    <p>The phone receives entries at or above the Pushover threshold shown in the status line.</p>
+  </details>
+</footer>
+<script>
+"use strict";
+const POLL_MS = 3000;
+const FEED_URL = "/api/feed?limit=200";
+const ICONS = {"-1": "", "0": "✅", "1": "🔔", "2": "🔔"};
+
+const el = (id) => document.getElementById(id);
+const statusEl = el("status"), bannerEl = el("banner"), listEl = el("list");
+const filterEl = el("filter"), bellEl = el("bell"), thresholdEl = el("bell-threshold");
+const silentEl = el("show-silent"), markReadEl = el("mark-read");
+
+let entries = [];          // newest feed, oldest first
+let seen = null;           // keys seen on earlier polls; null until the first poll lands
+const unread = new Set();  // keys that arrived since the page opened and are not marked read
+let audio = null;          // AudioContext, created by the bell button's click
+
+function stored(key, fallback) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
+  catch (e) { return fallback; }
+}
+function store(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private mode: not persisted */ }
+}
+
+function keyOf(e) { return e.id || [e.ts, e.machine, e.title].join("|"); }
+function priorityOf(e) { const p = Number(e.priority); return Number.isFinite(p) ? p : 0; }
+
+function beep() {
+  if (!audio) return;
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.frequency.value = 880;
+  gain.gain.value = 0.08;
+  osc.connect(gain); gain.connect(audio.destination);
+  osc.start(); osc.stop(audio.currentTime + 0.15);
+}
+
+function formatTime(ts) {
+  const d = new Date(Number(ts) * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  const time = d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? time : d.toLocaleDateString([], {month: "short", day: "numeric"}) + " " + time;
+}
+
+function span(text, className) {
+  const s = document.createElement("span");
+  if (className) s.className = className;
+  s.textContent = text;
+  return s;
+}
+
+function render() {
+  const needle = filterEl.value.trim().toLowerCase();
+  const showSilent = silentEl.checked;
+  listEl.textContent = "";
+  let shown = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i], p = priorityOf(e);
+    if (p === -2 && !showSilent) continue;
+    if (needle) {
+      const hay = [e.project, e.machine, e.title, e.message].join(" ").toLowerCase();
+      if (!hay.includes(needle)) continue;
+    }
+    const li = document.createElement("li");
+    if (unread.has(keyOf(e))) li.className = "unread";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.appendChild(span(formatTime(e.ts)));
+    if (e.project) meta.appendChild(span(String(e.project)));
+    if (e.machine) meta.appendChild(span(String(e.machine)));
+    li.appendChild(meta);
+
+    const text = document.createElement("div");
+    text.className = "text";
+    const icon = ICONS[String(p)];
+    if (icon) text.appendChild(span(icon + " "));
+    text.appendChild(span(String(e.title === undefined ? "" : e.title), "title"));
+    text.appendChild(span(" — " + String(e.message === undefined ? "" : e.message)));
+    if (typeof e.url === "string" && /^https?:\/\//i.test(e.url)) {
+      const a = document.createElement("a");
+      a.href = e.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "🔗 " + (e.url_title ? String(e.url_title) : "link");
+      text.appendChild(a);
+    }
+    li.appendChild(text);
+    listEl.appendChild(li);
+    shown++;
+  }
+  if (!shown) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = entries.length ? "Nothing matches." : "No notifications yet.";
+    listEl.appendChild(li);
+  }
+  document.title = unread.size ? "(" + unread.size + ") newsdesk" : "newsdesk";
+}
+
+function showBanner(text) {
+  bannerEl.textContent = text;
+  bannerEl.className = text ? "on" : "";
+}
+
+function onFeed(feed) {
+  const state = feed.state || {};
+  entries = Array.isArray(feed.entries) ? feed.entries : [];
+
+  const threshold = Number(thresholdEl.value);
+  let ring = false;
+  const keys = entries.map(keyOf);
+  if (seen) {
+    entries.forEach((e, i) => {
+      if (seen.has(keys[i])) return;
+      unread.add(keys[i]);
+      const p = priorityOf(e);
+      if (p !== -2 && p >= threshold) ring = true;
+    });
+  } else {
+    seen = new Set();
+  }
+  keys.forEach((k) => seen.add(k));
+  if (ring) beep();
+
+  const age = Math.max(0, Math.round(Number(feed.now) - Number(state.last_cycle_ts)));
+  const remotes = state.remotes || {};
+  const names = Object.keys(remotes);
+  const reached = names.filter((n) => remotes[n] !== null).length;
+  const parts = ["relay " + age + "s ago", "pushover " + state.pushover,
+                 "remotes " + reached + "/" + names.length];
+  if (state.healthchecks === false) parts.push("healthchecks off");
+  if (state.retrying) parts.push("retrying " + state.retrying);
+  statusEl.textContent = parts.join(" · ");
+
+  showBanner(age > Number(feed.stale_after_s)
+    ? "The relay has not completed a cycle for " + age + " s — notifications are not being forwarded."
+    : "");
+  render();
+}
+
+async function poll() {
+  try {
+    const response = await fetch(FEED_URL, {cache: "no-store"});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    onFeed(await response.json());
+  } catch (e) {
+    showBanner("Cannot reach the relay — this page is not updating.");
+  } finally {
+    setTimeout(poll, POLL_MS);
+  }
+}
+
+thresholdEl.value = stored("newsdesk.bellThreshold", "1");
+silentEl.checked = stored("newsdesk.showSilent", "0") === "1";
+
+filterEl.addEventListener("input", render);
+silentEl.addEventListener("change", () => { store("newsdesk.showSilent", silentEl.checked ? "1" : "0"); render(); });
+thresholdEl.addEventListener("change", () => store("newsdesk.bellThreshold", thresholdEl.value));
+markReadEl.addEventListener("click", () => { unread.clear(); render(); });
+bellEl.addEventListener("click", () => {
+  // Browsers only allow sound after a click, so the bell starts off on every page load.
+  if (audio) {
+    audio.close();
+    audio = null;
+  } else {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) { audio = new Ctx(); beep(); }
+  }
+  bellEl.textContent = audio ? "🔔 Bell on" : "🔕 Bell off";
+  bellEl.setAttribute("aria-pressed", audio ? "true" : "false");
+});
+
+poll();
+</script>
+</body>
+</html>

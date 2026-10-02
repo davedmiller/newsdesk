@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ABOUTME: LaunchAgent template that keeps `newsdesk relay` running on the hub. -->
+<!-- ABOUTME: scripts/install-launchd.sh replaces __HOME__ and loads it; do not load this file directly. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dave.newsdesk-relay</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/bin/newsdesk</string>
+        <string>relay</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.local/share/newsdesk/relay.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.local/share/newsdesk/relay.log</string>
+</dict>
+</plist>
