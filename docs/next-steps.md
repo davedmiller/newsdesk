@@ -1,8 +1,20 @@
 # Newsdesk — Next Steps
 
-*Last updated: 2026-03-11 —:—*
+*Last updated: 2026-10-03 10:26 MDT*
 
 Ideas and potential improvements for newsdesk, roughly grouped by theme. Nothing here is committed — just a backlog to pick from.
+
+## Record everything that pages (added 2026-10-03)
+
+Goal: every page that reaches Dave's phone also leaves a newsdesk record, even when it was sent by something other than the relay. Records for pages sent while the relay or the mini was down arrive late, once services are back, carrying their original time. Late entries already sort by when the hub accepted them and show the sender's time (mini-relay plan D10). Do them in order: P1 is a prerequisite for P2 and P3.
+
+| ID | Item | Notes |
+|----|------|-------|
+| P1 | `newsdesk send --record-only` | Writes the entry to history and the web viewer at its real priority, but the relay never forwards it to Pushover (for example an entry field `"forward": false`, honoured by the relay and shown on the page). It is for copies of alerts that something else has already paged. Today the only non-forwarding priority is −2, which loses the real priority (OpenBrain #211). |
+| P2 | Record healthchecks.io alerts in the relay | healthchecks.io pages through its own Pushover integration when a check goes DOWN or comes back UP, so those pages leave no newsdesk record. The checks are "Lake freeze watch", "Lake freeze alarm", `newsdesk-relay`, and `backup-monitor-daily` once it exists (#943). On startup and every ~5 min, the relay lists the project's checks (`GET https://healthchecks.io/api/v3/checks/`) and each check's flips (`GET /api/v3/checks/<unique_key>/flips/?seconds=…`, fields `timestamp` and `up`). It writes each flip it has not seen as a record-only entry: project `healthchecks`, the flip's own time, priority 2 for down and 0 for up, deduplicated on check + timestamp. A **read-only** API key is enough: the docs allow it to list checks and flips (header `X-Api-Key`). Dave creates the key in the healthchecks.io project settings; store it in the mini's Keychain with the staged loader (#946). The relay's own outage is recorded when it comes back. |
+| P3 | Record emergency acknowledgements (optional) | For each priority-2 entry the relay forwards, keep Pushover's `receipt` and poll `https://api.pushover.net/1/receipts/<receipt>.json` until `acknowledged` or `expired`. Then write a record-only entry against it, e.g. "acknowledged 02:19" (#541). |
+
+Already covered, no change needed: hvac_monitor's freeze watch and night-flush check, and the Claude Code hooks, all send through newsdesk. jon-audio's `notify.py` calls Pushover directly but is dormant; skipped by Dave's decision.
 
 ## Reliability & Robustness
 
