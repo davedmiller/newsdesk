@@ -47,7 +47,7 @@ Then point it at the hub in `~/.config/newsdesk/config.json`:
 
 Same clone and `setup.sh`, then:
 
-1. **Config** (`~/.config/newsdesk/config.json`): no `hub`; set `pushover_min_priority` (2 = emergencies only) and `web_bind` to the machine's Tailscale address so the page is reachable from the tailnet and nothing else. `web_port` defaults to 5556.
+1. **Config** (`~/.config/newsdesk/config.json`): no `hub`; set `pushover_min_priority` (2 = emergencies only). Leave `web_bind` at its default, `127.0.0.1`: the page is published over HTTPS by Tailscale Serve (step 5), so nothing reaches it except through the tailnet. `web_port` defaults to 5556.
 2. **Keychain**, in a Terminal on the hub itself (the Keychain is not usable over ssh):
    ```bash
    security add-generic-password -a pushover -s newsdesk-app-token -w <APP_TOKEN>
@@ -58,7 +58,9 @@ Same clone and `setup.sh`, then:
 3. **Check**: `newsdesk init` shows both Pushover ticks; `newsdesk relay --once --no-pushover` runs one cycle and prints its summary.
 4. **Run it**: `scripts/install-launchd.sh` installs `com.dave.newsdesk-relay` as a LaunchAgent (KeepAlive, log at `~/.local/share/newsdesk/relay.log`). Re-run it after pulling new code, or `launchctl kickstart -k gui/$(id -u)/com.dave.newsdesk-relay`.
 
-The page is then at `http://<hub tailscale ip>:5556`.
+5. **Publish the page**: `tailscale serve --bg --https=8443 5556`, once on the hub (it persists across reboots; HTTPS certificates must be enabled for the tailnet).
+
+The page is then at `https://<hub>.<tailnet>.ts.net:8443/` (micro-mac-mini: `https://micro-mac-mini.tailbf38e2.ts.net:8443/`), tailnet only.
 
 ## Usage
 
@@ -67,7 +69,7 @@ newsdesk send "Title" "Message"
 newsdesk send "Deploy Done" "All tests passed" --priority 1 --project myapp
 # --url adds a tappable link in the Pushover notification and on the page
 newsdesk send "Backup degraded" "Ann TM stale, NAS 91%" --priority 1 \
-  --url "http://100.70.51.21:5555/" --url-title "Open status page"
+  --url "https://micro-mac-mini.tailbf38e2.ts.net/" --url-title "Open status page"
 
 newsdesk relay                 # the hub loop; normally run by launchd
 newsdesk relay --once          # one cycle, print the summary, exit

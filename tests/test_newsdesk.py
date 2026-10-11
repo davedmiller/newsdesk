@@ -141,6 +141,13 @@ class TestConfigDefaults:
         assert config["remote_machines"] == []
         assert config["pushover_min_priority"] == -1
 
+    def test_web_page_binds_loopback_by_default(self, tmp_path):
+        # Reached over HTTPS through `tailscale serve`, which proxies to 127.0.0.1; binding a
+        # LAN or Tailscale address instead would open a plain-HTTP way in.
+        config = nd.load_config(str(tmp_path / "nonexistent.json"))
+        assert config["web_bind"] == "127.0.0.1"
+        assert config["web_port"] == 5556
+
 
 class TestConfigLoads:
     """U13: valid config file is parsed correctly."""
